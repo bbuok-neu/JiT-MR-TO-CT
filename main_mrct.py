@@ -190,19 +190,25 @@ def main(args):
     # Resume from checkpoint if provided
     checkpoint_path = os.path.join(args.resume, "checkpoint-last.pth") if args.resume else None
     if checkpoint_path and os.path.exists(checkpoint_path):
+        print(f"Loading checkpoint from: {checkpoint_path}")
         checkpoint = torch.load(checkpoint_path, map_location='cpu')
         model_without_ddp.load_state_dict(checkpoint['model'])
 
         ema_state_dict1 = checkpoint['model_ema1']
         ema_state_dict2 = checkpoint['model_ema2']
-        model_without_ddp.ema_params1 = [ema_state_dict1[name].cuda() for name, _ in model_without_ddp.named_parameters()]
-        model_without_ddp.ema_params2 = [ema_state_dict2[name].cuda() for name, _ in model_without_ddp.named_parameters()]
-        print("Resumed checkpoint from", args.resume)
+        # Device-agnostic EMA parameter loading
+        model_without_ddp.ema_params1 = [ema_state_dict1[name].to(device) for name, _ in model_without_ddp.named_parameters()]
+        model_without_ddp.ema_params2 = [ema_state_dict2[name].to(device) for name, _ in model_without_ddp.named_parameters()]
+        print(f"✓ Loaded model weights from checkpoint")
 
         if 'optimizer' in checkpoint and 'epoch' in checkpoint:
             optimizer.load_state_dict(checkpoint['optimizer'])
             args.start_epoch = checkpoint['epoch'] + 1
-            print("Loaded optimizer state!")
+            print(f"✓ Loaded optimizer state")
+            print(f"✓ Resuming training from epoch {args.start_epoch} (checkpoint was at epoch {checkpoint['epoch']})")
+        else:
+            print("⚠ Warning: Checkpoint does not contain optimizer state or epoch information")
+            print("⚠ Training will start from epoch 0 with reinitialized optimizer")
         del checkpoint
     else:
         model_without_ddp.ema_params1 = copy.deepcopy(list(model_without_ddp.parameters()))
@@ -218,6 +224,7 @@ def main(args):
 
     # Training loop
     print(f"Start training for {args.epochs} epochs")
+    print(f"Training will run from epoch {args.start_epoch} to {args.epochs - 1}")
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
