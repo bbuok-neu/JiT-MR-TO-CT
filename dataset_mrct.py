@@ -13,6 +13,7 @@ dataset/
 import os
 import torch
 from torch.utils.data import Dataset
+from torch.utils.data.distributed import DistributedSampler
 from PIL import Image
 import numpy as np
 
@@ -196,9 +197,6 @@ def get_mrct_dataloaders(dataset_path, batch_size=16, num_workers=4,
     
     # Create dataloaders
     if distributed:
-        import torch.utils.data
-        from torch.utils.data.distributed import DistributedSampler
-        
         train_sampler = DistributedSampler(train_dataset, shuffle=True)
         test_sampler = DistributedSampler(test_dataset, shuffle=False)
         

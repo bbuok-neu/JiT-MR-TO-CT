@@ -49,8 +49,6 @@ def check_imports(filepath):
 
 
 def main():
-    import sys
-    
     # Get base directory from command line or use script location
     if len(sys.argv) > 1:
         base_dir = sys.argv[1]
