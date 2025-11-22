@@ -38,7 +38,9 @@ def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, ep
         mr = mr.to(device, non_blocking=True)
         ct = ct.to(device, non_blocking=True)
 
-        with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+        # Device-agnostic autocast
+        device_type = 'cuda' if device.type == 'cuda' else 'cpu'
+        with torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16):
             loss = model(ct, mr)
 
         loss_value = loss.item()
@@ -106,12 +108,15 @@ def evaluate(model_without_ddp, test_loader, args, epoch, log_writer=None, save_
     
     img_idx = 0
     
+    # Device-agnostic autocast
+    device_type = 'cuda' if args.device == 'cuda' or (hasattr(args, 'gpu') and args.gpu is not None) else 'cpu'
+    
     for batch_idx, (mr, ct_true) in enumerate(test_loader):
         mr = mr.to(args.device, non_blocking=True)
         ct_true = ct_true.to(args.device, non_blocking=True)
         
         # Generate CT from MR
-        with torch.amp.autocast('cuda', dtype=torch.bfloat16):
+        with torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16):
             ct_pred = model_without_ddp.generate(mr)
         
         # Denormalize for metrics calculation
