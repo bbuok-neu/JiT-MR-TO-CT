@@ -40,7 +40,7 @@ dataset/
 ```
 
 **Important Notes:**
-- All images must be in JPG/JPEG format
+- All images must be in JPG/JPEG format (PNG also supported for preprocessing tools)
 - MR and CT images must be paired (same filename in corresponding folders)
 - Images are loaded as single-channel (grayscale)
 - Images can be 2D slices from 3D volumes

@@ -108,8 +108,8 @@ def evaluate(model_without_ddp, test_loader, args, epoch, log_writer=None, save_
     
     img_idx = 0
     
-    # Device-agnostic autocast
-    device_type = 'cuda' if args.device == 'cuda' or (hasattr(args, 'gpu') and args.gpu is not None) else 'cpu'
+    # Device-agnostic autocast - determine device type from args
+    device_type = 'cuda' if torch.cuda.is_available() and args.device != 'cpu' else 'cpu'
     
     for batch_idx, (mr, ct_true) in enumerate(test_loader):
         mr = mr.to(args.device, non_blocking=True)
