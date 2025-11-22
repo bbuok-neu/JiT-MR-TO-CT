@@ -94,7 +94,15 @@ class PairedMRCTDataset(Dataset):
         # Apply transforms if provided (e.g., cropping, flipping)
         if self.transform is not None:
             # Stack for joint transformation
-            stacked = np.stack([mr, ct], axis=-1)
+            # Scale to 0-255 range for PIL Image if needed
+            if mr.max() <= 1.0:
+                mr_uint8 = (mr * 255).astype(np.uint8)
+                ct_uint8 = (ct * 255).astype(np.uint8)
+            else:
+                mr_uint8 = mr.astype(np.uint8)
+                ct_uint8 = ct.astype(np.uint8)
+            
+            stacked = np.stack([mr_uint8, ct_uint8], axis=-1)
             stacked_pil = Image.fromarray(stacked.astype(np.uint8))
             stacked_transformed = self.transform(stacked_pil)
             

@@ -49,11 +49,18 @@ def check_imports(filepath):
 
 
 def main():
+    import sys
+    
+    # Get base directory from command line or use script location
+    if len(sys.argv) > 1:
+        base_dir = sys.argv[1]
+    else:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+    
     print("="*70)
     print("MR-to-CT Implementation Validation")
     print("="*70)
-    
-    base_dir = "/home/runner/work/JiT-MR-TO-CT/JiT-MR-TO-CT"
+    print(f"Base directory: {base_dir}")
     
     files_to_check = [
         "dataset_mrct.py",

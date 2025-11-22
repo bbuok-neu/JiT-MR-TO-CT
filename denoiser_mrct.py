@@ -68,7 +68,8 @@ class Denoiser_MRCT(nn.Module):
         ct_pred = self.net(concat_input, t.flatten())
         
         # Predicted velocity: v_pred = (ct_pred - zt) / (1 - t)
-        # Note: We use zt here, not concat(zt, mr), as per the formula
+        # Note: We compute velocity in the original CT space (using zt, not the concatenated input)
+        # because the velocity formula v = (x - z) / (1-t) is defined for the data space
         v_pred = (ct_pred - zt) / (1 - t).clamp_min(self.t_eps)
 
         # l2 loss

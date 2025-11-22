@@ -151,8 +151,13 @@ def main(args):
     print(f"Training batches: {len(train_loader)}")
     print(f"Test batches: {len(test_loader)}")
 
-    torch._dynamo.config.cache_size_limit = 128
-    torch._dynamo.config.optimize_ddp = False
+    # Configure torch compilation settings (may not be available in all versions)
+    try:
+        torch._dynamo.config.cache_size_limit = 128
+        torch._dynamo.config.optimize_ddp = False
+    except AttributeError:
+        # torch._dynamo not available in this PyTorch version
+        pass
 
     # Create denoiser
     model = Denoiser_MRCT(args)
