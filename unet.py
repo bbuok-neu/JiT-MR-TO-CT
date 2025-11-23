@@ -257,14 +257,18 @@ class DiffusionModelUNet(nn.Module):
         h = self.conv_in(x)
         
         # Encoder
-        hs = [h]
+        hs = [h]  # Save initial features
         for i, (blocks, downsample) in enumerate(zip(self.down_blocks, self.down_samples)):
+            # Process blocks at this level
             for layer in blocks:
                 if isinstance(layer, ResidualBlock):
                     h = layer(h, temb)
                 else:
                     h = layer(h)
+            # Save features BEFORE downsampling (for skip connections in decoder)
+            # These features are at the same resolution as where the decoder will upsample back to
             hs.append(h)
+            # Downsample to next level
             h = downsample(h)
         
         # Middle
@@ -273,11 +277,15 @@ class DiffusionModelUNet(nn.Module):
         h = self.mid_block2(h, temb)
         
         # Decoder
+        # Process decoder levels in reverse order (from coarsest to finest resolution)
+        # Skip connections are popped from hs in reverse order (finest to coarsest saved,
+        # so popping gives coarsest to finest, which matches decoder progression)
         block_idx = 0
         for level_idx in range(len(self.num_channels)):
             # At the start of each level, apply skip connection
+            # The skip features from encoder are at the same resolution as current decoder level
             if len(hs) > 0:
-                skip = hs.pop()
+                skip = hs.pop()  # Pop in reverse order (coarsest to finest)
                 h = torch.cat([h, skip], dim=1)
             
             # Process all blocks at this level
@@ -290,7 +298,7 @@ class DiffusionModelUNet(nn.Module):
                         h = layer(h)
                 block_idx += 1
             
-            # Upsample at the end of each level (except the last)
+            # Upsample at the end of each level (except the last/finest level)
             h = self.up_samples[level_idx](h)
         
         # Output

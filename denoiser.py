@@ -65,6 +65,11 @@ class Denoiser(nn.Module):
         For current ImageNet setup (placeholder):
         - x: image (acts as both target and condition)
         - We use self-conditioning as a placeholder
+        
+        TODO: When actual MR-CT paired data is available, this method should be updated to:
+        1. Accept an additional 'condition' parameter (MR image)
+        2. Use that condition instead of self-conditioning
+        3. Optionally support conditional dropout for classifier-free guidance
         """
         # Sample timestep
         t = self.sample_t(x.size(0), device=x.device).view(-1, *([1] * (x.ndim - 1)))
@@ -74,8 +79,10 @@ class Denoiser(nn.Module):
         z = t * x + (1 - t) * e
         
         # For MR-to-CT: concatenate noisy CT with MR condition
-        # For now, use the clean image as condition (placeholder)
-        # In actual MR-to-CT training, this would be the MR image
+        # PLACEHOLDER: Currently using clean image as condition (self-conditioning)
+        # This is a simplified placeholder until actual paired MR-CT data is integrated.
+        # In actual MR-to-CT training, replace this with the actual MR image:
+        #   condition = mr_image  # where mr_image is passed as an additional parameter
         condition = x  # Placeholder: use clean image as condition
         
         # Concatenate noisy target with condition
