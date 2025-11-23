@@ -1,0 +1,249 @@
+# Data Augmentation for MR-to-CT Synthesis
+
+This document describes the data augmentation features for medical image synthesis.
+
+## Overview
+
+The framework supports medical-specific data augmentation to improve model generalization and robustness. Augmentations are applied consistently to both MR and CT images to maintain their spatial correspondence.
+
+## Supported Augmentations
+
+### 1. Random Rotation
+- **Range**: ±10-15 degrees (configurable)
+- **Purpose**: Handles variations in patient positioning
+- **Default**: `-15` to `+15` degrees
+
+### 2. Random Horizontal Flip
+- **Probability**: 50%
+- **Purpose**: Augments dataset by creating mirror images
+- **Note**: Appropriate for anatomical structures with bilateral symmetry
+
+### 3. Elastic Deformation
+- **Purpose**: Simulates variations in organ shapes across patients
+- **Parameters**: 
+  - Control points: 7 (default)
+  - Max displacement: 7.5 voxels (default)
+- **Note**: Only available with TorchIO
+
+### 4. Random Zoom/Scaling
+- **Range**: 0.9 to 1.1x (configurable)
+- **Purpose**: Handles variations in patient size and FOV
+
+## Implementation
+
+### Using TorchIO (Recommended)
+
+TorchIO provides medical image-specific augmentations with proper handling of 3D/2D medical data.
+
+**Installation**:
+```bash
+pip install torchio==0.19.6
+```
+
+or update conda environment:
+```bash
+conda env update -f environment.yaml
+```
+
+### Fallback to Basic Transforms
+
+If TorchIO is not available, the framework automatically falls back to basic PyTorch/torchvision transforms:
+- Rotation and flip using `torchvision.transforms`
+- Elastic deformation is disabled (not available without TorchIO)
+- Zoom using affine transforms
+
+## Usage
+
+### Command Line Arguments
+
+```bash
+python main_mrct.py \
+    --data_path /path/to/dataset \
+    --enable_augmentation \              # Enable augmentation (default: enabled)
+    --rotation_degrees -15 15 \          # Rotation range in degrees
+    --enable_flip \                       # Enable random flip (default: enabled)
+    --enable_elastic \                    # Enable elastic deformation (default: enabled)
+    --zoom_range 0.9 1.1 \               # Zoom/scale range
+    --use_torchio \                       # Use TorchIO (default: enabled if available)
+    ... # other arguments
+```
+
+### Disabling Augmentation
+
+To disable augmentation:
+```bash
+python main_mrct.py --no_augmentation ...
+```
+
+### Custom Augmentation Settings
+
+Example with custom settings:
+```bash
+python main_mrct.py \
+    --rotation_degrees -10 10 \          # Reduce rotation range
+    --zoom_range 0.95 1.05 \             # Reduce zoom range
+    --enable_flip \                       # Keep flip enabled
+    ... # other arguments
+```
+
+## Training Scripts
+
+The provided training scripts include augmentation by default:
+
+### Single GPU Training
+```bash
+./train_example.sh
+```
+
+Edit the script to customize augmentation parameters:
+```bash
+ROTATION_DEGREES="-15 15"
+ENABLE_FLIP="--enable_flip"
+ENABLE_ELASTIC="--enable_elastic"
+ZOOM_RANGE="0.9 1.1"
+```
+
+### Distributed Training
+```bash
+./train_distributed.sh
+```
+
+## Programmatic Usage
+
+```python
+from augmentations_mrct import get_medical_augmentation
+
+# Create augmentation pipeline
+aug = get_medical_augmentation(
+    mode='train',
+    rotation_degrees=(-15, 15),
+    enable_flip=True,
+    enable_elastic=True,
+    zoom_range=(0.9, 1.1),
+    use_torchio=True
+)
+
+# Apply to paired images (numpy arrays)
+mr_augmented, ct_augmented = aug(mr, ct)
+```
+
+## Technical Details
+
+### Spatial Consistency
+
+All augmentations are applied **jointly** to MR and CT pairs using the same random parameters. This ensures:
+- Perfect spatial alignment is maintained
+- Geometric transformations are consistent
+- The paired relationship is preserved
+
+### Transform Pipeline
+
+1. **Basic transforms** (cropping) → Applied first
+2. **Medical augmentations** (rotation, elastic, zoom, flip) → Applied to paired images
+3. **Normalization** (z-score) → Applied after augmentation
+
+### Performance Considerations
+
+- Augmentations are applied on-the-fly during training
+- TorchIO operations are optimized for medical images
+- Elastic deformation is computationally expensive (applied with lower probability)
+- All transforms use GPU when available
+
+## Best Practices
+
+### Recommended Settings for Different Scenarios
+
+**Conservative (High-quality data)**:
+```bash
+--rotation_degrees -10 10 \
+--zoom_range 0.95 1.05 \
+--enable_flip
+# Disable elastic if images are already well-aligned
+```
+
+**Moderate (Default)**:
+```bash
+--rotation_degrees -15 15 \
+--zoom_range 0.9 1.1 \
+--enable_flip \
+--enable_elastic
+```
+
+**Aggressive (Small dataset)**:
+```bash
+--rotation_degrees -20 20 \
+--zoom_range 0.85 1.15 \
+--enable_flip \
+--enable_elastic
+```
+
+### Anatomical Considerations
+
+- **Brain**: Safe to use flip for sagittal/axial views
+- **Abdomen**: Use flip cautiously (organs are asymmetric)
+- **Spine**: Rotation should be limited (±5-10 degrees)
+
+### Dataset Size
+
+- **Large dataset (>10k pairs)**: Conservative augmentation
+- **Medium dataset (1k-10k pairs)**: Moderate augmentation
+- **Small dataset (<1k pairs)**: Aggressive augmentation
+
+## Validation
+
+Check if augmentation is working:
+```python
+from dataset_mrct import get_mrct_dataloaders
+
+train_loader, test_loader = get_mrct_dataloaders(
+    dataset_path='/path/to/data',
+    enable_augmentation=True,
+    ...
+)
+
+# The loader will print augmentation status:
+# "Medical augmentation enabled:"
+# "  - Rotation: (-15, 15)°"
+# "  - Flip: True"
+# "  - Elastic: True"
+# "  - Zoom: (0.9, 1.1)"
+# "  - Using: TorchIO"
+```
+
+## Troubleshooting
+
+### TorchIO Not Available
+
+If you see:
+```
+Warning: TorchIO not available. Install with: pip install torchio
+Using: Basic transforms
+```
+
+Install TorchIO:
+```bash
+pip install torchio==0.19.6
+```
+
+### Elastic Deformation Disabled
+
+Elastic deformation requires TorchIO. If using basic transforms, it will be automatically disabled.
+
+### Memory Issues
+
+If augmentation causes memory issues:
+1. Disable elastic deformation: `--enable_elastic=False`
+2. Reduce augmentation probability (edit `augmentations_mrct.py`)
+3. Reduce batch size
+
+## References
+
+- **TorchIO**: Pérez-García et al., "TorchIO: a Python library for efficient loading, preprocessing, augmentation and patch-based sampling of medical images in deep learning", 2021
+- **Medical Image Augmentation**: Shorten & Khoshgoftaar, "A survey on Image Data Augmentation for Deep Learning", 2019
+
+## See Also
+
+- `augmentations_mrct.py` - Augmentation implementation
+- `dataset_mrct.py` - Dataset loader with augmentation support
+- `train_example.sh` - Training script with augmentation
+- `QUICKSTART.md` - General usage guide

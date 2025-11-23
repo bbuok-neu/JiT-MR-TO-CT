@@ -30,6 +30,13 @@ NOISE_SCALE=1.0
 SAMPLING_METHOD="heun"
 NUM_SAMPLING_STEPS=50
 
+# Data augmentation parameters
+ENABLE_AUGMENTATION="--enable_augmentation"  # Use --no_augmentation to disable
+ROTATION_DEGREES="-15 15"  # Min and max rotation in degrees
+ENABLE_FLIP="--enable_flip"  # Random horizontal flip
+ENABLE_ELASTIC="--enable_elastic"  # Elastic deformation
+ZOOM_RANGE="0.9 1.1"  # Min and max zoom factor
+
 echo "Starting MR-to-CT synthesis training..."
 echo "Data path: $DATA_PATH"
 echo "Output directory: $OUTPUT_DIR"
@@ -51,6 +58,11 @@ python main_mrct.py \
     --noise_scale $NOISE_SCALE \
     --sampling_method $SAMPLING_METHOD \
     --num_sampling_steps $NUM_SAMPLING_STEPS \
+    $ENABLE_AUGMENTATION \
+    --rotation_degrees $ROTATION_DEGREES \
+    $ENABLE_FLIP \
+    $ENABLE_ELASTIC \
+    --zoom_range $ZOOM_RANGE \
     --online_eval --eval_freq $EVAL_FREQ \
     --save_last_freq 5 \
     --log_freq 50

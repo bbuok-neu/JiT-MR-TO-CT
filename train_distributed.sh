@@ -34,6 +34,11 @@ torchrun --nproc_per_node=$NUM_GPUS --nnodes=1 --node_rank=0 \
     --noise_scale 1.0 \
     --sampling_method heun \
     --num_sampling_steps 50 \
+    --enable_augmentation \
+    --rotation_degrees -15 15 \
+    --enable_flip \
+    --enable_elastic \
+    --zoom_range 0.9 1.1 \
     --online_eval --eval_freq 10 \
     --save_last_freq 5 \
     --log_freq 50

@@ -88,6 +88,26 @@ def get_args_parser():
     parser.add_argument('--ct_std', type=float, default=0.5,
                         help='Std for CT z-score normalization')
 
+    # data augmentation
+    parser.add_argument('--enable_augmentation', action='store_true',
+                        help='Enable medical image augmentation for training')
+    parser.add_argument('--no_augmentation', action='store_false', dest='enable_augmentation',
+                        help='Disable medical image augmentation')
+    parser.set_defaults(enable_augmentation=True)
+    parser.add_argument('--use_torchio', action='store_true',
+                        help='Use TorchIO for augmentation (if available)')
+    parser.set_defaults(use_torchio=True)
+    parser.add_argument('--rotation_degrees', type=float, nargs=2, default=[-15, 15],
+                        help='Range for random rotation in degrees (min max)')
+    parser.add_argument('--enable_flip', action='store_true',
+                        help='Enable random horizontal flip')
+    parser.set_defaults(enable_flip=True)
+    parser.add_argument('--enable_elastic', action='store_true',
+                        help='Enable elastic deformation')
+    parser.set_defaults(enable_elastic=True)
+    parser.add_argument('--zoom_range', type=float, nargs=2, default=[0.9, 1.1],
+                        help='Range for random zoom/scaling (min max)')
+
     # checkpointing
     parser.add_argument('--output_dir', default='./output_mrct',
                         help='Directory to save outputs (empty for no saving)')
@@ -145,7 +165,13 @@ def main(args):
         ct_mean=args.ct_mean,
         ct_std=args.ct_std,
         img_size=args.img_size,
-        distributed=args.distributed
+        distributed=args.distributed,
+        enable_augmentation=args.enable_augmentation,
+        use_torchio=args.use_torchio,
+        rotation_degrees=tuple(args.rotation_degrees),
+        enable_flip=args.enable_flip,
+        enable_elastic=args.enable_elastic,
+        zoom_range=tuple(args.zoom_range)
     )
     
     print(f"Training batches: {len(train_loader)}")

@@ -26,7 +26,7 @@ class PairedMRCTDataset(Dataset):
     """
     
     def __init__(self, root_dir, split='train', mr_mean=0.0, mr_std=1.0, 
-                 ct_mean=0.0, ct_std=1.0, transform=None):
+                 ct_mean=0.0, ct_std=1.0, transform=None, augmentation=None):
         """
         Args:
             root_dir: Root directory containing 'mr' and 'ct' folders
@@ -35,7 +35,8 @@ class PairedMRCTDataset(Dataset):
             mr_std: Std for MR z-score normalization
             ct_mean: Mean for CT z-score normalization
             ct_std: Std for CT z-score normalization
-            transform: Optional transform to apply to images
+            transform: Optional basic transform to apply to images (e.g., cropping)
+            augmentation: Optional medical augmentation (PairedMedicalAugmentation instance)
         """
         self.root_dir = root_dir
         self.split = split
@@ -44,6 +45,7 @@ class PairedMRCTDataset(Dataset):
         self.ct_mean = ct_mean
         self.ct_std = ct_std
         self.transform = transform
+        self.augmentation = augmentation
         
         # Build paths to MR and CT directories
         self.mr_dir = os.path.join(root_dir, 'mr', split)
@@ -92,7 +94,8 @@ class PairedMRCTDataset(Dataset):
             raise ValueError(f"MR shape {mr.shape} does not match CT shape {ct.shape} "
                            f"for file {self.mr_files[idx]}")
         
-        # Apply transforms if provided (e.g., cropping, flipping)
+        # Apply basic transforms if provided (e.g., cropping)
+        # These are applied before medical augmentation
         if self.transform is not None:
             # Stack for joint transformation
             # Scale to 0-255 range for PIL Image if needed
@@ -110,20 +113,22 @@ class PairedMRCTDataset(Dataset):
             # If transform returns tensor, split channels
             if isinstance(stacked_transformed, torch.Tensor):
                 if stacked_transformed.shape[0] == 2:
-                    mr = stacked_transformed[0:1]  # Keep channel dim
-                    ct = stacked_transformed[1:2]  # Keep channel dim
+                    mr = stacked_transformed[0].numpy()  # Remove channel dim for augmentation
+                    ct = stacked_transformed[1].numpy()
                 else:
                     # Handle case where transform outputs different format
-                    mr = stacked_transformed[..., 0:1].permute(2, 0, 1)
-                    ct = stacked_transformed[..., 1:2].permute(2, 0, 1)
+                    mr = stacked_transformed[..., 0].numpy()
+                    ct = stacked_transformed[..., 1].numpy()
             else:
                 # If transform returns numpy array
                 mr = stacked_transformed[..., 0]
                 ct = stacked_transformed[..., 1]
-                mr = torch.from_numpy(mr).unsqueeze(0).float()
-                ct = torch.from_numpy(ct).unsqueeze(0).float()
+        
+        # Apply medical augmentation if provided (rotation, elastic, zoom, etc.)
+        if self.augmentation is not None:
+            mr, ct = self.augmentation(mr, ct)
         else:
-            # No transform, convert to tensor
+            # No augmentation, just convert to tensor
             mr = torch.from_numpy(mr).unsqueeze(0).float()
             ct = torch.from_numpy(ct).unsqueeze(0).float()
         
@@ -142,7 +147,10 @@ class PairedMRCTDataset(Dataset):
 
 def get_mrct_dataloaders(dataset_path, batch_size=16, num_workers=4, 
                          mr_mean=0.5, mr_std=0.5, ct_mean=0.5, ct_std=0.5,
-                         img_size=256, distributed=False):
+                         img_size=256, distributed=False, 
+                         enable_augmentation=True, use_torchio=True,
+                         rotation_degrees=(-15, 15), enable_flip=True,
+                         enable_elastic=True, zoom_range=(0.9, 1.1)):
     """
     Create dataloaders for MR-CT paired dataset.
     
@@ -154,17 +162,24 @@ def get_mrct_dataloaders(dataset_path, batch_size=16, num_workers=4,
         ct_mean, ct_std: Z-score normalization params for CT
         img_size: Target image size (will be center cropped)
         distributed: Whether to use distributed training
+        enable_augmentation: Whether to enable medical image augmentation for training
+        use_torchio: Whether to use TorchIO for augmentation (if available)
+        rotation_degrees: Range for random rotation in degrees (min, max)
+        enable_flip: Whether to enable random horizontal flip
+        enable_elastic: Whether to enable elastic deformation
+        zoom_range: Range for random zoom/scaling (min, max)
     
     Returns:
         train_loader, test_loader
     """
     from torchvision import transforms
     from util.crop import center_crop_arr
+    from augmentations_mrct import get_medical_augmentation
     
-    # Define transforms for training
+    # Define basic transforms for cropping (applied before augmentation)
+    # Note: We no longer include RandomHorizontalFlip here as it's in medical augmentation
     transform_train = transforms.Compose([
         transforms.Lambda(lambda img: center_crop_arr(img, img_size)),
-        transforms.RandomHorizontalFlip(),
         transforms.PILToTensor()
     ])
     
@@ -174,6 +189,25 @@ def get_mrct_dataloaders(dataset_path, batch_size=16, num_workers=4,
         transforms.PILToTensor()
     ])
     
+    # Get medical augmentation for training
+    train_augmentation = None
+    if enable_augmentation:
+        train_augmentation = get_medical_augmentation(
+            mode='train',
+            rotation_degrees=rotation_degrees,
+            enable_flip=enable_flip,
+            enable_elastic=enable_elastic,
+            zoom_range=zoom_range,
+            use_torchio=use_torchio
+        )
+        if train_augmentation is not None:
+            print(f"Medical augmentation enabled:")
+            print(f"  - Rotation: {rotation_degrees}°")
+            print(f"  - Flip: {enable_flip}")
+            print(f"  - Elastic: {enable_elastic}")
+            print(f"  - Zoom: {zoom_range}")
+            print(f"  - Using: {'TorchIO' if use_torchio and train_augmentation.use_torchio else 'Basic transforms'}")
+    
     # Create datasets
     train_dataset = PairedMRCTDataset(
         dataset_path, 
@@ -182,7 +216,8 @@ def get_mrct_dataloaders(dataset_path, batch_size=16, num_workers=4,
         mr_std=mr_std,
         ct_mean=ct_mean,
         ct_std=ct_std,
-        transform=transform_train
+        transform=transform_train,
+        augmentation=train_augmentation
     )
     
     test_dataset = PairedMRCTDataset(
@@ -192,7 +227,8 @@ def get_mrct_dataloaders(dataset_path, batch_size=16, num_workers=4,
         mr_std=mr_std,
         ct_mean=ct_mean,
         ct_std=ct_std,
-        transform=transform_test
+        transform=transform_test,
+        augmentation=None  # No augmentation for test
     )
     
     # Create dataloaders

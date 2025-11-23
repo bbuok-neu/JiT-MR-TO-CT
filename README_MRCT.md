@@ -12,6 +12,7 @@ The key modifications for MR-to-CT synthesis:
 4. **Z-Score Normalization**: Both MR and CT images are normalized using preset mean/std
 5. **Paired Training**: Uses paired MR-CT data for supervised learning
 6. **Medical Metrics**: Evaluates using SSIM and PSNR instead of FID/IS
+7. **🆕 Medical Augmentation**: Optional augmentation with rotation, flip, elastic deformation, and zoom (see [AUGMENTATION.md](AUGMENTATION.md))
 
 ## Dataset Structure
 
@@ -54,9 +55,9 @@ conda env create -f environment.yaml
 conda activate jit
 ```
 
-Additional dependencies (if needed):
+The environment includes TorchIO for medical image augmentation. If not installed:
 ```bash
-pip install pillow
+pip install torchio==0.19.6
 ```
 
 ## Training
@@ -77,6 +78,28 @@ python main_mrct.py \
     --output_dir ./output_mrct \
     --online_eval --eval_freq 10
 ```
+
+### Training with Data Augmentation (Recommended)
+
+```bash
+python main_mrct.py \
+    --data_path /path/to/dataset \
+    --model JiT-B/16 \
+    --img_size 256 \
+    --batch_size 16 \
+    --epochs 200 \
+    --enable_augmentation \
+    --rotation_degrees -15 15 \
+    --enable_flip \
+    --enable_elastic \
+    --zoom_range 0.9 1.1 \
+    --mr_mean 0.5 --mr_std 0.5 \
+    --ct_mean 0.5 --ct_std 0.5 \
+    --output_dir ./output_mrct \
+    --online_eval --eval_freq 10
+```
+
+See [AUGMENTATION.md](AUGMENTATION.md) for detailed augmentation documentation.
 
 ### Distributed Training (Multi-GPU)
 
