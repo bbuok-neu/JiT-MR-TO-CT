@@ -32,10 +32,20 @@ NUM_SAMPLING_STEPS=50
 
 # Data augmentation parameters
 ENABLE_AUGMENTATION="--enable_augmentation"  # Use --no_augmentation to disable
+
+# Geometric augmentations (applied to both MR and CT)
 ROTATION_DEGREES="-15 15"  # Min and max rotation in degrees
 ENABLE_FLIP="--enable_flip"  # Random horizontal flip
 ENABLE_ELASTIC="--enable_elastic"  # Elastic deformation
 ZOOM_RANGE="0.9 1.1"  # Min and max zoom factor
+# ENABLE_GRID_DISTORTION="--enable_grid_distortion"  # Uncomment to enable grid distortion
+
+# MR-only augmentations (intensity/artifact transforms)
+# ENABLE_BIAS_FIELD="--enable_bias_field"  # Uncomment to enable bias field simulation
+# ENABLE_MOTION_GHOSTING="--enable_motion_ghosting"  # Uncomment to enable motion artifacts
+# ENABLE_RICIAN_NOISE="--enable_rician_noise"  # Uncomment to enable Rician noise
+# ENABLE_GAMMA="--enable_gamma"  # Uncomment to enable gamma correction
+# ENABLE_CUTOUT="--enable_cutout"  # Uncomment to enable random cutout/erasing
 
 echo "Starting MR-to-CT synthesis training..."
 echo "Data path: $DATA_PATH"
@@ -63,6 +73,12 @@ python main_mrct.py \
     $ENABLE_FLIP \
     $ENABLE_ELASTIC \
     --zoom_range $ZOOM_RANGE \
+    ${ENABLE_GRID_DISTORTION:-} \
+    ${ENABLE_BIAS_FIELD:-} \
+    ${ENABLE_MOTION_GHOSTING:-} \
+    ${ENABLE_RICIAN_NOISE:-} \
+    ${ENABLE_GAMMA:-} \
+    ${ENABLE_CUTOUT:-} \
     --online_eval --eval_freq $EVAL_FREQ \
     --save_last_freq 5 \
     --log_freq 50

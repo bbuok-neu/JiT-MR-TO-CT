@@ -39,6 +39,8 @@ torchrun --nproc_per_node=$NUM_GPUS --nnodes=1 --node_rank=0 \
     --enable_flip \
     --enable_elastic \
     --zoom_range 0.9 1.1 \
+    --enable_bias_field \
+    --enable_gamma \
     --online_eval --eval_freq 10 \
     --save_last_freq 5 \
     --log_freq 50

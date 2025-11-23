@@ -149,8 +149,14 @@ def get_mrct_dataloaders(dataset_path, batch_size=16, num_workers=4,
                          mr_mean=0.5, mr_std=0.5, ct_mean=0.5, ct_std=0.5,
                          img_size=256, distributed=False, 
                          enable_augmentation=True, use_torchio=True,
+                         # Geometric augmentations
                          rotation_degrees=(-15, 15), enable_flip=True,
-                         enable_elastic=True, zoom_range=(0.9, 1.1)):
+                         enable_elastic=True, zoom_range=(0.9, 1.1),
+                         enable_grid_distortion=False,
+                         # MR-only augmentations
+                         enable_bias_field=False, enable_motion_ghosting=False,
+                         enable_rician_noise=False, enable_gamma=False,
+                         enable_cutout=False):
     """
     Create dataloaders for MR-CT paired dataset.
     
@@ -164,10 +170,20 @@ def get_mrct_dataloaders(dataset_path, batch_size=16, num_workers=4,
         distributed: Whether to use distributed training
         enable_augmentation: Whether to enable medical image augmentation for training
         use_torchio: Whether to use TorchIO for augmentation (if available)
-        rotation_degrees: Range for random rotation in degrees (min, max)
-        enable_flip: Whether to enable random horizontal flip
-        enable_elastic: Whether to enable elastic deformation
-        zoom_range: Range for random zoom/scaling (min, max)
+        
+        Geometric augmentations (applied to both MR and CT):
+            rotation_degrees: Range for random rotation in degrees (min, max)
+            enable_flip: Whether to enable random horizontal flip
+            enable_elastic: Whether to enable elastic deformation
+            zoom_range: Range for random zoom/scaling (min, max)
+            enable_grid_distortion: Whether to enable grid distortion
+        
+        MR-only augmentations:
+            enable_bias_field: Whether to simulate bias field inhomogeneity
+            enable_motion_ghosting: Whether to simulate motion artifacts
+            enable_rician_noise: Whether to add Rician noise
+            enable_gamma: Whether to apply gamma correction
+            enable_cutout: Whether to apply random cutout/erasing
     
     Returns:
         train_loader, test_loader
@@ -194,19 +210,26 @@ def get_mrct_dataloaders(dataset_path, batch_size=16, num_workers=4,
     if enable_augmentation:
         train_augmentation = get_medical_augmentation(
             mode='train',
+            # Geometric
             rotation_degrees=rotation_degrees,
             enable_flip=enable_flip,
             enable_elastic=enable_elastic,
             zoom_range=zoom_range,
+            enable_grid_distortion=enable_grid_distortion,
+            # MR-only
+            enable_bias_field=enable_bias_field,
+            enable_motion_ghosting=enable_motion_ghosting,
+            enable_rician_noise=enable_rician_noise,
+            enable_gamma=enable_gamma,
+            enable_cutout=enable_cutout,
+            # General
             use_torchio=use_torchio
         )
         if train_augmentation is not None:
             print(f"Medical augmentation enabled:")
-            print(f"  - Rotation: {rotation_degrees}°")
-            print(f"  - Flip: {enable_flip}")
-            print(f"  - Elastic: {enable_elastic}")
-            print(f"  - Zoom: {zoom_range}")
-            print(f"  - Using: {'TorchIO' if use_torchio and train_augmentation.use_torchio else 'Basic transforms'}")
+            print(f"  Geometric (MR+CT): Rotation={rotation_degrees}°, Flip={enable_flip}, Elastic={enable_elastic}, Zoom={zoom_range}, Grid={enable_grid_distortion}")
+            print(f"  MR-only: BiasField={enable_bias_field}, Motion={enable_motion_ghosting}, Noise={enable_rician_noise}, Gamma={enable_gamma}, Cutout={enable_cutout}")
+            print(f"  Using: {'TorchIO' if use_torchio and train_augmentation.use_torchio else 'Basic transforms'}")
     
     # Create datasets
     train_dataset = PairedMRCTDataset(

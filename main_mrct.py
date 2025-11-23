@@ -97,6 +97,8 @@ def get_args_parser():
     parser.add_argument('--use_torchio', action='store_true',
                         help='Use TorchIO for augmentation (if available)')
     parser.set_defaults(use_torchio=True)
+    
+    # Geometric augmentations (applied to both MR and CT)
     parser.add_argument('--rotation_degrees', type=float, nargs=2, default=[-15, 15],
                         help='Range for random rotation in degrees (min max)')
     parser.add_argument('--enable_flip', action='store_true',
@@ -107,6 +109,20 @@ def get_args_parser():
     parser.set_defaults(enable_elastic=True)
     parser.add_argument('--zoom_range', type=float, nargs=2, default=[0.9, 1.1],
                         help='Range for random zoom/scaling (min max)')
+    parser.add_argument('--enable_grid_distortion', action='store_true',
+                        help='Enable grid distortion (alternative to elastic)')
+    
+    # MR-only augmentations (intensity/artifact transforms)
+    parser.add_argument('--enable_bias_field', action='store_true',
+                        help='Enable bias field simulation (MR only)')
+    parser.add_argument('--enable_motion_ghosting', action='store_true',
+                        help='Enable motion ghosting simulation (MR only)')
+    parser.add_argument('--enable_rician_noise', action='store_true',
+                        help='Enable Rician noise injection (MR only)')
+    parser.add_argument('--enable_gamma', action='store_true',
+                        help='Enable gamma correction (MR only)')
+    parser.add_argument('--enable_cutout', action='store_true',
+                        help='Enable random cutout/erasing (MR only)')
 
     # checkpointing
     parser.add_argument('--output_dir', default='./output_mrct',
@@ -168,10 +184,18 @@ def main(args):
         distributed=args.distributed,
         enable_augmentation=args.enable_augmentation,
         use_torchio=args.use_torchio,
+        # Geometric augmentations
         rotation_degrees=tuple(args.rotation_degrees),
         enable_flip=args.enable_flip,
         enable_elastic=args.enable_elastic,
-        zoom_range=tuple(args.zoom_range)
+        zoom_range=tuple(args.zoom_range),
+        enable_grid_distortion=args.enable_grid_distortion,
+        # MR-only augmentations
+        enable_bias_field=args.enable_bias_field,
+        enable_motion_ghosting=args.enable_motion_ghosting,
+        enable_rician_noise=args.enable_rician_noise,
+        enable_gamma=args.enable_gamma,
+        enable_cutout=args.enable_cutout
     )
     
     print(f"Training batches: {len(train_loader)}")
