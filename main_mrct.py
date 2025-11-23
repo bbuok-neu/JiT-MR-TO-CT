@@ -1,5 +1,5 @@
 """
-Main Training Script for MR-to-CT Synthesis using JiT
+Main Training Script for MR-to-CT Synthesis using MONAI DiffusionModelUNet
 """
 import argparse
 import datetime
@@ -21,14 +21,14 @@ from dataset_mrct import get_mrct_dataloaders
 
 
 def get_args_parser():
-    parser = argparse.ArgumentParser('JiT for MR-to-CT Synthesis', add_help=False)
+    parser = argparse.ArgumentParser('MONAI UNet for MR-to-CT Synthesis', add_help=False)
 
     # architecture
-    parser.add_argument('--model', default='JiT-B/16', type=str, metavar='MODEL',
-                        help='Name of the model to train (JiT-B/16, JiT-B/32, JiT-L/16, etc.)')
+    parser.add_argument('--model', default='UNet', type=str, metavar='MODEL',
+                        help='Model architecture (UNet with MONAI DiffusionModelUNet)')
     parser.add_argument('--img_size', default=256, type=int, help='Image size')
-    parser.add_argument('--attn_dropout', type=float, default=0.0, help='Attention dropout rate')
-    parser.add_argument('--proj_dropout', type=float, default=0.0, help='Projection dropout rate')
+    parser.add_argument('--attn_dropout', type=float, default=0.0, help='Attention dropout rate (unused for UNet)')
+    parser.add_argument('--proj_dropout', type=float, default=0.0, help='Projection dropout rate (unused for UNet)')
 
     # training
     parser.add_argument('--epochs', default=200, type=int)
