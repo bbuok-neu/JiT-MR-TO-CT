@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from model_jit import JiT_models
+from unet import DiffusionModelUNet
 
 
 class Denoiser(nn.Module):
@@ -9,12 +10,21 @@ class Denoiser(nn.Module):
         args
     ):
         super().__init__()
-        self.net = JiT_models[args.model](
-            input_size=args.img_size,
-            in_channels=3,
-            num_classes=args.class_num,
-            attn_drop=args.attn_dropout,
-            proj_drop=args.proj_dropout,
+        # Use UNet for conditional MR-to-CT synthesis
+        # Configure for 2-channel input (noisy_latent + condition) and 1-channel output
+        # For MR-to-CT: both MR and CT are grayscale (1 channel each)
+        self.condition_channels = getattr(args, 'condition_channels', 1)  # MR condition channels
+        self.target_channels = getattr(args, 'target_channels', 1)  # CT target channels
+        
+        self.net = DiffusionModelUNet(
+            spatial_dims=2,
+            in_channels=self.target_channels + self.condition_channels,  # noisy target + condition
+            out_channels=self.target_channels,  # predicted target
+            num_channels=(64, 128, 256, 512),
+            attention_levels=(False, False, True, True),
+            num_res_blocks=2,
+            num_head_channels=32,
+            dropout=0.0,
         )
         self.img_size = args.img_size
         self.num_classes = args.class_num
@@ -47,28 +57,68 @@ class Denoiser(nn.Module):
         return torch.sigmoid(z)
 
     def forward(self, x, labels):
-        labels_dropped = self.drop_labels(labels) if self.training else labels
-
+        """
+        Forward pass for conditional diffusion.
+        For MR-to-CT synthesis:
+        - x: target image (CT)
+        - condition: conditioning image (MR)
+        
+        For current ImageNet setup (placeholder):
+        - x: image (acts as both target and condition)
+        - We use self-conditioning as a placeholder
+        """
+        # Sample timestep
         t = self.sample_t(x.size(0), device=x.device).view(-1, *([1] * (x.ndim - 1)))
         e = torch.randn_like(x) * self.noise_scale
-
+        
+        # Create noisy version of target
         z = t * x + (1 - t) * e
+        
+        # For MR-to-CT: concatenate noisy CT with MR condition
+        # For now, use the clean image as condition (placeholder)
+        # In actual MR-to-CT training, this would be the MR image
+        condition = x  # Placeholder: use clean image as condition
+        
+        # Concatenate noisy target with condition
+        z_cond = torch.cat([z, condition], dim=1)
+        
+        # Compute target velocity
         v = (x - z) / (1 - t).clamp_min(self.t_eps)
-
-        x_pred = self.net(z, t.flatten(), labels_dropped)
+        
+        # Predict with UNet (takes concatenated input)
+        x_pred = self.net(z_cond, t.flatten())
+        
+        # Compute predicted velocity
+        # Note: UNet predicts the denoised output directly
+        # We need to convert it to velocity: v_theta = (x_theta - z) / (1 - t)
         v_pred = (x_pred - z) / (1 - t).clamp_min(self.t_eps)
-
+        
         # l2 loss
         loss = (v - v_pred) ** 2
         loss = loss.mean(dim=(1, 2, 3)).mean()
-
+        
         return loss
 
     @torch.no_grad()
-    def generate(self, labels):
+    def generate(self, labels, condition=None):
+        """
+        Generate images using the diffusion model.
+        
+        Args:
+            labels: Class labels (for compatibility, not used in conditional model)
+            condition: Conditioning image (MR image for MR-to-CT synthesis)
+                      If None, uses random noise as condition (placeholder)
+        """
         device = labels.device
         bsz = labels.size(0)
-        z = self.noise_scale * torch.randn(bsz, 3, self.img_size, self.img_size, device=device)
+        
+        # Initialize noisy target
+        z = self.noise_scale * torch.randn(bsz, self.target_channels, self.img_size, self.img_size, device=device)
+        
+        # Initialize condition (placeholder: random noise if not provided)
+        if condition is None:
+            condition = torch.randn(bsz, self.condition_channels, self.img_size, self.img_size, device=device)
+        
         timesteps = torch.linspace(0.0, 1.0, self.steps+1, device=device).view(-1, *([1] * z.ndim)).expand(-1, bsz, -1, -1, -1)
 
         if self.method == "euler":
@@ -82,40 +132,42 @@ class Denoiser(nn.Module):
         for i in range(self.steps - 1):
             t = timesteps[i]
             t_next = timesteps[i + 1]
-            z = stepper(z, t, t_next, labels)
+            z = stepper(z, t, t_next, condition)
         # last step euler
-        z = self._euler_step(z, timesteps[-2], timesteps[-1], labels)
+        z = self._euler_step(z, timesteps[-2], timesteps[-1], condition)
         return z
 
     @torch.no_grad()
-    def _forward_sample(self, z, t, labels):
-        # conditional
-        x_cond = self.net(z, t.flatten(), labels)
-        v_cond = (x_cond - z) / (1.0 - t).clamp_min(self.t_eps)
-
-        # unconditional
-        x_uncond = self.net(z, t.flatten(), torch.full_like(labels, self.num_classes))
-        v_uncond = (x_uncond - z) / (1.0 - t).clamp_min(self.t_eps)
-
-        # cfg interval
-        low, high = self.cfg_interval
-        interval_mask = (t < high) & ((low == 0) | (t > low))
-        cfg_scale_interval = torch.where(interval_mask, self.cfg_scale, 1.0)
-
-        return v_uncond + cfg_scale_interval * (v_cond - v_uncond)
+    def _forward_sample(self, z, t, condition):
+        """
+        Forward sampling step with conditioning.
+        
+        Args:
+            z: noisy target
+            t: timestep
+            condition: conditioning image (MR for MR-to-CT)
+        """
+        # Concatenate noisy target with condition
+        z_cond = torch.cat([z, condition], dim=1)
+        
+        # Predict with UNet
+        x_pred = self.net(z_cond, t.flatten())
+        v_pred = (x_pred - z) / (1.0 - t).clamp_min(self.t_eps)
+        
+        return v_pred
 
     @torch.no_grad()
-    def _euler_step(self, z, t, t_next, labels):
-        v_pred = self._forward_sample(z, t, labels)
+    def _euler_step(self, z, t, t_next, condition):
+        v_pred = self._forward_sample(z, t, condition)
         z_next = z + (t_next - t) * v_pred
         return z_next
 
     @torch.no_grad()
-    def _heun_step(self, z, t, t_next, labels):
-        v_pred_t = self._forward_sample(z, t, labels)
+    def _heun_step(self, z, t, t_next, condition):
+        v_pred_t = self._forward_sample(z, t, condition)
 
         z_next_euler = z + (t_next - t) * v_pred_t
-        v_pred_t_next = self._forward_sample(z_next_euler, t_next, labels)
+        v_pred_t_next = self._forward_sample(z_next_euler, t_next, condition)
 
         v_pred = 0.5 * (v_pred_t + v_pred_t_next)
         z_next = z + (t_next - t) * v_pred
