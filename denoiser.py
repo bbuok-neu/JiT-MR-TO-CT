@@ -22,11 +22,11 @@ class Denoiser(nn.Module):
             spatial_dims=2,
             in_channels=self.target_channels + self.condition_channels,  # noisy target + condition
             out_channels=self.target_channels,  # predicted target
-            num_res_blocks=(2, 2, 2, 2),  # MONAI expects tuple/list
+            num_res_blocks=(2, 2, 2, 2),  # MONAI expects tuple/list, one value per level
             num_channels=(64, 128, 256, 512),
             attention_levels=(False, False, True, True),
             norm_num_groups=32,
-            num_head_channels=(32, 32, 32, 32),  # MONAI expects tuple/list matching num_channels length
+            num_head_channels=(64, 128, 256, 512),  # MONAI expects tuple/list, typically matching num_channels
             with_conditioning=False,  # We use concatenation, not cross-attention conditioning
             resblock_updown=True,  # Include updown sampling in residual blocks
         )
