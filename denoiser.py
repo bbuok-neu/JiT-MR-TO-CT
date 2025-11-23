@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-from model_jit import JiT_models
 from unet import DiffusionModelUNet
 
 

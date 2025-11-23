@@ -213,8 +213,13 @@ class DiffusionModelUNet(nn.Module):
         
         for i, ch_out in reversed(list(enumerate(num_channels))):
             for j in range(num_res_blocks + 1):
-                # Account for skip connections
-                ch_in = ch + (ch_out if j == 0 else 0)
+                # First block in each level gets skip connection from encoder
+                # ch is current channels, ch_out is target channels for this level
+                if j == 0:
+                    ch_in = ch + ch_out  # skip connection adds encoder features
+                else:
+                    ch_in = ch_out  # subsequent blocks just process the features
+                
                 layers = [ResidualBlock(ch_in, ch_out, time_embed_dim, dropout)]
                 ch = ch_out
                 
@@ -224,7 +229,7 @@ class DiffusionModelUNet(nn.Module):
                 
                 self.up_blocks.append(nn.ModuleList(layers))
             
-            # Upsample (except for the first level going backwards)
+            # Upsample (except for the first level going backwards, which is the finest level)
             if i > 0:
                 self.up_samples.append(Upsample(ch))
             else:
@@ -268,19 +273,25 @@ class DiffusionModelUNet(nn.Module):
         h = self.mid_block2(h, temb)
         
         # Decoder
-        for i, (blocks, upsample) in enumerate(zip(self.up_blocks, self.up_samples)):
-            # Skip connection
-            if i % (self.num_res_blocks + 1) == 0 and len(hs) > 0:
-                h = torch.cat([h, hs.pop()], dim=1)
+        block_idx = 0
+        for level_idx in range(len(self.num_channels)):
+            # At the start of each level, apply skip connection
+            if len(hs) > 0:
+                skip = hs.pop()
+                h = torch.cat([h, skip], dim=1)
             
-            for layer in blocks:
-                if isinstance(layer, ResidualBlock):
-                    h = layer(h, temb)
-                else:
-                    h = layer(h)
+            # Process all blocks at this level
+            for block_in_level in range(self.num_res_blocks + 1):
+                blocks = self.up_blocks[block_idx]
+                for layer in blocks:
+                    if isinstance(layer, ResidualBlock):
+                        h = layer(h, temb)
+                    else:
+                        h = layer(h)
+                block_idx += 1
             
-            if (i + 1) % (self.num_res_blocks + 1) == 0:
-                h = upsample(h)
+            # Upsample at the end of each level (except the last)
+            h = self.up_samples[level_idx](h)
         
         # Output
         h = self.norm_out(h)
