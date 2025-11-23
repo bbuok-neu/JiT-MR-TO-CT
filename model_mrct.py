@@ -341,6 +341,9 @@ class JiT_MRCT(nn.Module):
 
         return output
 
+def JiT_MRCT_B_8(**kwargs):
+    return JiT_MRCT(depth=12, hidden_size=384, num_heads=6,
+               bottleneck_dim=64, in_context_len=32, in_context_start=4, patch_size=8, **kwargs)
 
 def JiT_MRCT_B_16(**kwargs):
     return JiT_MRCT(depth=12, hidden_size=768, num_heads=12,
@@ -368,6 +371,7 @@ def JiT_MRCT_H_32(**kwargs):
 
 
 JiT_MRCT_models = {
+    'JiT-B/8': JiT_MRCT_B_8,
     'JiT-B/16': JiT_MRCT_B_16,
     'JiT-B/32': JiT_MRCT_B_32,
     'JiT-L/16': JiT_MRCT_L_16,

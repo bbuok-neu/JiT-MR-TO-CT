@@ -28,8 +28,8 @@ class PairedMedicalAugmentation:
         rotation_degrees: Tuple[float, float] = (-15, 15),
         enable_flip: bool = True,
         enable_elastic: bool = True,
-        elastic_num_control_points: int = 7,
-        elastic_max_displacement: float = 7.5,
+        elastic_num_control_points: int = 5,
+        elastic_max_displacement: float = (5,5,0),
         zoom_range: Tuple[float, float] = (0.9, 1.1),
         enable_grid_distortion: bool = False,
         grid_num_control_points: int = 5,
@@ -169,7 +169,7 @@ class PairedMedicalAugmentation:
         if self.zoom_range[0] != 1.0 or self.zoom_range[1] != 1.0:
             geometric_transforms.append(
                 tio.RandomAffine(
-                    scales=(*self.zoom_range, *self.zoom_range, 1),  # Scale x and y, not z
+                    scales=(*self.zoom_range, *self.zoom_range, *(1,1)),  # Scale x and y, not z
                     degrees=0,
                     translation=0,
                     p=self.augmentation_probability
