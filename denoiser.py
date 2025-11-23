@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from unet import DiffusionModelUNet
+from generative.networks.nets import DiffusionModelUNet
 
 
 class Denoiser(nn.Module):
@@ -9,21 +9,26 @@ class Denoiser(nn.Module):
         args
     ):
         super().__init__()
-        # Use UNet for conditional MR-to-CT synthesis
+        # Use MONAI's DiffusionModelUNet for conditional MR-to-CT synthesis
         # Configure for 2-channel input (noisy_latent + condition) and 1-channel output
         # For MR-to-CT: both MR and CT are grayscale (1 channel each)
         self.condition_channels = getattr(args, 'condition_channels', 1)  # MR condition channels
         self.target_channels = getattr(args, 'target_channels', 1)  # CT target channels
         
+        # Initialize MONAI DiffusionModelUNet
+        # Reference: https://github.com/Project-MONAI/GenerativeModels
+        # Example usage from MOTFM: https://github.com/milad1378yz/MOTFM
         self.net = DiffusionModelUNet(
             spatial_dims=2,
             in_channels=self.target_channels + self.condition_channels,  # noisy target + condition
             out_channels=self.target_channels,  # predicted target
+            num_res_blocks=(2, 2, 2, 2),  # MONAI expects tuple/list
             num_channels=(64, 128, 256, 512),
             attention_levels=(False, False, True, True),
-            num_res_blocks=2,
-            num_head_channels=32,
-            dropout=0.0,
+            norm_num_groups=32,
+            num_head_channels=(32, 32, 32, 32),  # MONAI expects tuple/list matching num_channels length
+            with_conditioning=False,  # We use concatenation, not cross-attention conditioning
+            resblock_updown=True,  # Include updown sampling in residual blocks
         )
         self.img_size = args.img_size
         self.num_classes = args.class_num
@@ -91,8 +96,9 @@ class Denoiser(nn.Module):
         # Compute target velocity
         v = (x - z) / (1 - t).clamp_min(self.t_eps)
         
-        # Predict with UNet (takes concatenated input)
-        x_pred = self.net(z_cond, t.flatten())
+        # Predict with MONAI DiffusionModelUNet (takes concatenated input)
+        # API: forward(x, timesteps, context=None)
+        x_pred = self.net(x=z_cond, timesteps=t.flatten())
         
         # Compute predicted velocity
         # Note: UNet predicts the denoised output directly
@@ -156,8 +162,8 @@ class Denoiser(nn.Module):
         # Concatenate noisy target with condition
         z_cond = torch.cat([z, condition], dim=1)
         
-        # Predict with UNet
-        x_pred = self.net(z_cond, t.flatten())
+        # Predict with MONAI DiffusionModelUNet
+        x_pred = self.net(x=z_cond, timesteps=t.flatten())
         v_pred = (x_pred - z) / (1.0 - t).clamp_min(self.t_eps)
         
         return v_pred

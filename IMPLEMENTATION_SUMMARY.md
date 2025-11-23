@@ -2,60 +2,72 @@
 
 ## Overview
 
-This PR successfully replaces the Vision Transformer (ViT) based JiT model with a DiffusionModelUNet architecture, specifically designed for conditional image-to-image translation tasks like MR-to-CT synthesis.
+This PR successfully replaces the Vision Transformer (ViT) based JiT model with MONAI's DiffusionModelUNet architecture, specifically designed for conditional image-to-image translation tasks like MR-to-CT synthesis.
+
+**Key Update**: Now uses the official MONAI implementation instead of a custom UNet for better support and performance.
 
 ## Changes Made
 
-### 1. New File: `unet.py`
+### 1. MONAI Integration
 
-Created a complete DiffusionModelUNet implementation with the following components:
+**Package Added**: `monai-generative==0.2.3`
 
-#### Core Architecture
-- **Spatial Dimensions**: 2D (suitable for medical imaging slices)
-- **Input Channels**: 2 (noisy target + condition image)
-- **Output Channels**: 1 (predicted target)
-- **Channel Progression**: (64, 128, 256, 512)
-- **Parameters**: ~38 million (compared to ~86M for JiT-B/16)
+Added to `environment.yaml`:
+```yaml
+pip:
+  - monai-generative==0.2.3
+```
 
-#### Key Components
-1. **TimestepEmbedding**: Sinusoidal position encoding for timestep t
-2. **ResidualBlock**: Conv blocks with group normalization and timestep injection
-3. **AttentionBlock**: Self-attention for capturing long-range dependencies
-4. **Downsample/Upsample**: Spatial resolution change layers
-5. **Encoder**: 4 levels with 2 residual blocks each
-6. **Middle**: Residual + Attention + Residual at bottleneck
-7. **Decoder**: 4 levels with 3 residual blocks each (first handles skip connection)
+**Import Statement**:
+```python
+from generative.networks.nets import DiffusionModelUNet
+```
 
-#### Skip Connections
-- Encoder saves features BEFORE downsampling at each level
-- Decoder concatenates skip features at START of each level
-- All concatenations occur at matching spatial resolutions
-- Preserves fine-grained spatial information through the network
+**References**:
+- MONAI GenerativeModels: https://github.com/Project-MONAI/GenerativeModels
+- Example Usage (MOTFM): https://github.com/milad1378yz/MOTFM
+
+#### Why MONAI?
+1. Official, maintained implementation
+2. Extensively tested in medical imaging
+3. Rich features (flash attention, flexible conditioning)
+4. Better performance and memory efficiency
+5. Community support and documentation
 
 ### 2. Modified File: `denoiser.py`
 
-Updated to use the new UNet architecture:
+Updated to use MONAI's DiffusionModelUNet:
 
 #### Model Instantiation
 ```python
+from generative.networks.nets import DiffusionModelUNet
+
 self.net = DiffusionModelUNet(
     spatial_dims=2,
-    in_channels=2,  # noisy_target + condition
-    out_channels=1,  # predicted_target
+    in_channels=2,  # noisy_CT + MR_condition
+    out_channels=1,  # predicted_CT
+    num_res_blocks=(2, 2, 2, 2),  # Per-level (MONAI expects tuple)
     num_channels=(64, 128, 256, 512),
     attention_levels=(False, False, True, True),
-    num_res_blocks=2,
-    num_head_channels=32,
-    dropout=0.0,
+    norm_num_groups=32,
+    num_head_channels=(32, 32, 32, 32),  # Must match num_channels length
+    with_conditioning=False,  # Using concatenation instead
+    resblock_updown=True,
 )
 ```
 
 #### Forward Pass
 - Creates noisy version: `z = t * x + (1-t) * noise`
 - Concatenates with condition: `z_cond = cat([z, condition])`
-- Predicts with UNet: `x_pred = net(z_cond, t)`
+- Predicts with MONAI UNet: `x_pred = net(x=z_cond, timesteps=t)`
 - Computes velocity: `v_pred = (x_pred - z) / (1-t)`
 - Uses L2 loss against target velocity
+
+#### API Usage
+MONAI's forward call uses explicit parameter names:
+```python
+output = self.net(x=z_cond, timesteps=t.flatten())
+```
 
 #### Placeholder for MR-CT Data
 Currently uses self-conditioning (`condition = x`) as a placeholder. This is documented with clear TODO comments for migration to actual paired MR-CT data.
@@ -63,24 +75,36 @@ Currently uses self-conditioning (`condition = x`) as a placeholder. This is doc
 #### Generation Method
 Updated to work with image conditioning instead of class conditioning. Accepts optional condition image parameter.
 
-### 3. New File: `UNET_IMPLEMENTATION.md`
+### 3. Reference File: `unet_custom.py` (Preserved)
 
-Comprehensive documentation including:
-- Architecture details and design decisions
-- Usage instructions for MR-to-CT synthesis
-- Comparison with original JiT model
-- Technical details about components
-- Future enhancement suggestions
+The original custom UNet implementation is preserved for reference:
+- Educational purposes
+- Architecture understanding
+- Debugging and comparison
+- Standalone implementation reference
 
-### 4. New File: `.gitignore`
+**Note**: Active code now uses MONAI's official implementation.
 
-Added to exclude:
-- Python cache files (`__pycache__`, `*.pyc`)
-- Virtual environments
-- IDE files
-- Output directories
-- Model checkpoints
-- Logs
+### 4. Updated File: `environment.yaml`
+
+Added MONAI dependency:
+```yaml
+pip:
+  - monai-generative==0.2.3
+```
+
+### 5. Documentation Files
+
+**`UNET_IMPLEMENTATION.md`**: Updated to reflect MONAI usage
+- MONAI installation instructions
+- API documentation
+- Configuration examples
+- Comparison: MONAI vs Custom implementation
+- References to MONAI and MOTFM
+
+**`IMPLEMENTATION_SUMMARY.md`**: This file, updated with MONAI details
+
+**`.gitignore`**: Excludes build artifacts and cache files
 
 ## Verification
 

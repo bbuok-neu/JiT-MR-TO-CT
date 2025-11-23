@@ -1,53 +1,92 @@
 # DiffusionModelUNet for MR-to-CT Synthesis
 
-This document describes the modifications made to support conditional image-to-image translation using a U-Net architecture, specifically designed for MR-to-CT synthesis.
+This document describes the modifications made to support conditional image-to-image translation using a U-Net architecture from MONAI GenerativeModels, specifically designed for MR-to-CT synthesis.
 
 ## Architecture Changes
 
-### From ViT to U-Net
+### From ViT to U-Net (MONAI)
 
-The original JiT model used a Vision Transformer (ViT) architecture with class-conditional generation. This has been replaced with a **DiffusionModelUNet** architecture that supports image-conditional generation.
+The original JiT model used a Vision Transformer (ViT) architecture with class-conditional generation. This has been replaced with **MONAI's DiffusionModelUNet** architecture that supports image-conditional generation.
+
+**Key Change**: We now use the official MONAI implementation instead of a custom UNet:
+- **Package**: `monai-generative==0.2.3`
+- **Import**: `from generative.networks.nets import DiffusionModelUNet`
+- **Reference**: [MONAI GenerativeModels](https://github.com/Project-MONAI/GenerativeModels)
+- **Example**: [MOTFM (Conditional Flow Matching)](https://github.com/milad1378yz/MOTFM)
+
+### Installation
+
+```bash
+pip install monai-generative==0.2.3
+```
+
+Or add to `environment.yaml`:
+```yaml
+pip:
+  - monai-generative==0.2.3
+```
 
 ### Key Components
 
-#### 1. DiffusionModelUNet (`unet.py`)
+#### 1. MONAI DiffusionModelUNet (`denoiser.py`)
 
-A U-Net architecture implementation with the following features:
+Using MONAI's official implementation with the following configuration:
 
+**Configuration**:
+```python
+from generative.networks.nets import DiffusionModelUNet
+
+model = DiffusionModelUNet(
+    spatial_dims=2,
+    in_channels=2,  # noisy_CT (1ch) + MR_condition (1ch)
+    out_channels=1,  # predicted_CT
+    num_res_blocks=(2, 2, 2, 2),  # One value per level
+    num_channels=(64, 128, 256, 512),
+    attention_levels=(False, False, True, True),
+    norm_num_groups=32,
+    num_head_channels=(32, 32, 32, 32),  # Must match num_channels length
+    with_conditioning=False,  # We use concatenation, not cross-attention
+    resblock_updown=True,
+)
+```
+
+**Key Features**:
 - **Spatial dimensions**: 2D (for slice-based medical imaging)
 - **Input channels**: 2 (noisy target + conditioning image)
 - **Output channels**: 1 (predicted target)
 - **Architecture**:
-  - Encoder path with 4 levels: (64, 128, 256, 512) channels
+  - 4 levels with (64, 128, 256, 512) channels
   - Self-attention at deeper levels (last 2 levels)
-  - Residual blocks with Group Normalization
+  - 2 residual blocks per level
+  - Group Normalization with 32 groups
   - Skip connections from encoder to decoder
   - Timestep conditioning via sinusoidal embeddings
 
-**Configuration**:
+**API**:
 ```python
-DiffusionModelUNet(
-    spatial_dims=2,
-    in_channels=2,  # noisy_CT (1ch) + MR_condition (1ch)
-    out_channels=1,  # predicted_CT
-    num_channels=(64, 128, 256, 512),
-    attention_levels=(False, False, True, True),
-    num_res_blocks=2,
-    num_head_channels=32,
-    dropout=0.0,
-)
+# Forward pass
+output = model(x=input_tensor, timesteps=timestep_tensor, context=None)
+
+# Parameters:
+# - x: Input tensor (B, C, H, W) - concatenated [noisy_CT, MR_condition]
+# - timesteps: Timestep tensor (B,) - diffusion timestep in [0, 1]
+# - context: Optional cross-attention conditioning (not used in our case)
 ```
 
 #### 2. Modified Denoiser (`denoiser.py`)
 
-The `Denoiser` class has been updated to use the U-Net architecture:
+The `Denoiser` class has been updated to use MONAI's DiffusionModelUNet:
 
 **Key changes**:
-- Uses `DiffusionModelUNet` instead of JiT ViT model
+- Imports `DiffusionModelUNet` from `generative.networks.nets` (MONAI)
+- Uses official MONAI implementation instead of custom UNet
 - Supports configurable `condition_channels` and `target_channels`
 - Default: 1-channel condition (MR) + 1-channel target (CT)
 - Forward pass concatenates condition with noisy target
 - Sampling methods updated for image conditioning
+- API calls use explicit parameter names: `model(x=input, timesteps=t)`
+
+**Note**: The custom UNet implementation is preserved in `unet_custom.py` for reference only.
 
 ## Conditional Diffusion Framework
 
@@ -167,12 +206,46 @@ This allows the network to adapt its behavior based on the noise level.
 
 1. **Data Pipeline**: Integrate paired MR-CT dataset loading
 2. **Multi-scale**: Support different resolution levels
-3. **3D Support**: Extend to volumetric (3D) medical images
+3. **3D Support**: Extend to volumetric (3D) medical images using `spatial_dims=3`
 4. **Classifier-free Guidance**: Adapt CFG for image conditioning
 5. **Perceptual Loss**: Add perceptual/adversarial losses for better quality
+6. **Cross-attention**: Explore MONAI's `with_conditioning=True` for alternative conditioning
+
+## Why MONAI Instead of Custom Implementation?
+
+### Advantages of Using MONAI
+
+1. **Official Support**: Maintained by Project MONAI with regular updates
+2. **Tested & Optimized**: Extensively tested in medical imaging applications
+3. **Feature Rich**: Includes advanced features like flash attention, flexible conditioning
+4. **Community**: Large community and extensive documentation
+5. **Compatibility**: Works seamlessly with other MONAI components
+6. **Performance**: Optimized implementation with better memory efficiency
+
+### API Differences
+
+The MONAI implementation has some parameter differences from our custom UNet:
+
+| Parameter | Custom UNet | MONAI UNet | Notes |
+|-----------|-------------|------------|-------|
+| `num_res_blocks` | `int` | `tuple/list` | MONAI expects per-level values |
+| `num_head_channels` | `int` | `tuple/list` | MONAI expects per-level values |
+| `dropout` | `float` | Not used | MONAI has different dropout parameters |
+| Forward API | `(x, t)` | `(x, timesteps, context)` | MONAI has explicit parameter names |
+| Extra params | - | `norm_num_groups`, `resblock_updown`, etc. | MONAI has more configuration options |
+
+### Custom UNet Reference
+
+The original custom implementation is preserved in `unet_custom.py` for:
+- Understanding the architecture
+- Reference for those who prefer standalone implementation
+- Educational purposes
+- Debugging and comparison
 
 ## References
 
 - Original JiT paper: "Back to Basics: Let Denoising Generative Models Denoise"
 - MONAI Generative Models: https://github.com/Project-MONAI/GenerativeModels
+- MONAI Documentation: https://docs.monai.io/
+- MOTFM (Example Usage): https://github.com/milad1378yz/MOTFM
 - Diffusion Models Beat GANs on Image Synthesis (U-Net for diffusion)

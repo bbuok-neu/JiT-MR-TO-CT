@@ -1,5 +1,15 @@
 # --------------------------------------------------------
-# DiffusionModelUNet implementation
+# Custom DiffusionModelUNet implementation (Reference Only)
+# 
+# NOTE: This file is kept for reference purposes only.
+# The actual implementation now uses MONAI's official DiffusionModelUNet
+# from the monai-generative package.
+#
+# Installation: pip install monai-generative==0.2.3
+# Import: from generative.networks.nets import DiffusionModelUNet
+# Reference: https://github.com/Project-MONAI/GenerativeModels
+# Example: https://github.com/milad1378yz/MOTFM
+#
 # Based on MONAI GenerativeModels
 # Adapted for MR-to-CT synthesis with conditional inputs
 # --------------------------------------------------------
