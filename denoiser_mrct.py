@@ -45,6 +45,7 @@ class Denoiser_MRCT(nn.Module):
             self._load_pretrained_weights(self.pretrained_path)
 
     def _to_three_channels(self, x: torch.Tensor) -> torch.Tensor:
+        """Repeat single-channel inputs to three channels for pretrained compatibility."""
         if x.dim() == 4 and x.size(1) == 1:
             return x.repeat(1, 3, 1, 1)
         return x
@@ -67,8 +68,10 @@ class Denoiser_MRCT(nn.Module):
         patch_key = "x_embedder.proj1.weight"
         if patch_key in processed_state_dict:
             w = processed_state_dict[patch_key]
-            if w.shape[1] == 3 and self.net.in_channels == 6:
-                processed_state_dict[patch_key] = w.repeat(1, 2, 1, 1)
+            if w.shape[1] == 3 and self.net.in_channels % w.shape[1] == 0:
+                repeat_factor = self.net.in_channels // w.shape[1]
+                # Expand 3-channel pretrained patch embedding weights to 6 channels (MR + zt)
+                processed_state_dict[patch_key] = w.repeat(1, repeat_factor, 1, 1)
 
         missing, unexpected = self.net.load_state_dict(processed_state_dict, strict=False)
         print(f"Loaded pretrained weights from {path}")
@@ -90,7 +93,7 @@ class Denoiser_MRCT(nn.Module):
             mr: Condition MR image (N, 1, H, W)
         
         Returns:
-            loss: L2 loss between predicted and true velocity
+            loss: L2 loss between predicted and true velocity for 3-channel CT prediction
         """
         ct = self._to_three_channels(ct)
         mr = self._to_three_channels(mr)
@@ -130,7 +133,7 @@ class Denoiser_MRCT(nn.Module):
          mr: Condition MR image (N, 1, H, W) or (N, 3, H, W)
         
         Returns:
-            Generated CT image (N, 1, H, W)
+            Generated CT image (N, 3, H, W)
         """
         device = mr.device
         bsz = mr.size(0)
@@ -163,9 +166,9 @@ class Denoiser_MRCT(nn.Module):
         Forward pass during sampling
         
         Args:
-            z: Current state (N, 1, H, W)
+            z: Current state (N, 3, H, W)
             t: Current timestep (N, 1, 1, 1)
-            mr: Condition MR image (N, 1, H, W)
+            mr: Condition MR image (N, 1, H, W) or (N, 3, H, W)
         
         Returns:
             Predicted velocity
