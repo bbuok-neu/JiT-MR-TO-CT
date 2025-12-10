@@ -315,9 +315,9 @@ class JiT_MRCT(nn.Module):
 
     def forward(self, x, t):
         """
-        x: (N, C, H, W) where C=2 (zt and MR concatenated)
+        x: (N, C, H, W) where C equals configured in_channels (e.g., 6 for zt and MR concatenated)
         t: (N,) timestep
-        Returns: (N, 1, H, W) predicted CT
+        Returns: (N, out_channels, H, W) predicted CT
         """
         # time embeddings (no class embedding)
         c = self.t_embedder(t)

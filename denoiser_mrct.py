@@ -68,10 +68,12 @@ class Denoiser_MRCT(nn.Module):
         patch_key = "x_embedder.proj1.weight"
         if patch_key in processed_state_dict:
             w = processed_state_dict[patch_key]
-            if w.shape[1] == 3 and self.net.in_channels % w.shape[1] == 0:
+            if self.net.in_channels % w.shape[1] == 0:
                 repeat_factor = self.net.in_channels // w.shape[1]
-                # Expand 3-channel pretrained patch embedding weights to 6 channels (MR + zt)
+                # Expand pretrained patch embedding weights to match duplicated MR + zt channels
                 processed_state_dict[patch_key] = w.repeat(1, repeat_factor, 1, 1)
+            else:
+                print(f"Pretrained patch embedding channels ({w.shape[1]}) do not divide target in_channels {self.net.in_channels}; skipping expansion.")
 
         missing, unexpected = self.net.load_state_dict(processed_state_dict, strict=False)
         print(f"Loaded pretrained weights from {path}")

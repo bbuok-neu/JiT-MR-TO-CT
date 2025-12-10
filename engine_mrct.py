@@ -126,7 +126,7 @@ def evaluate(model_without_ddp, test_loader, args, epoch, log_writer=None, save_
         ct_true_denorm = ct_true * args.ct_std + args.ct_mean
 
         if ct_true_denorm.shape[1] == 1 and ct_pred_denorm.shape[1] > 1:
-            # Expand single-channel ground truth CT (grayscale) to match duplicated predicted channels for fair metrics
+            # Expand single-channel ground truth CT (grayscale) to match duplicated predicted channels produced for pretrained compatibility
             ct_true_denorm_for_metrics = ct_true_denorm.repeat(1, ct_pred_denorm.shape[1], 1, 1)
         else:
             ct_true_denorm_for_metrics = ct_true_denorm
