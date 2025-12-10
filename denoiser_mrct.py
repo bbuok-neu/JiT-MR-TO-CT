@@ -52,8 +52,7 @@ class Denoiser_MRCT(nn.Module):
 
     def _load_pretrained_weights(self, path: str):
         if not os.path.exists(path):
-            print(f"Pretrained weight path {path} not found. Skipping pretrained loading.")
-            return
+            raise FileNotFoundError(f"Pretrained weight path {path} not found while use_pretrained is enabled.")
         checkpoint = torch.load(path, map_location="cpu")
         state_dict = checkpoint.get("model", checkpoint)
         processed_state_dict = {}
@@ -73,7 +72,7 @@ class Denoiser_MRCT(nn.Module):
                 # Expand pretrained patch embedding weights to match duplicated MR + zt channels
                 processed_state_dict[patch_key] = w.repeat(1, repeat_factor, 1, 1)
             else:
-                print(f"Pretrained patch embedding channels ({w.shape[1]}) do not divide target in_channels {self.net.in_channels}; skipping expansion.")
+                raise ValueError(f"Pretrained patch embedding channels ({w.shape[1]}) do not divide target in_channels {self.net.in_channels}.")
 
         missing, unexpected = self.net.load_state_dict(processed_state_dict, strict=False)
         print(f"Loaded pretrained weights from {path}")
