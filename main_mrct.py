@@ -29,6 +29,10 @@ def get_args_parser():
     parser.add_argument('--img_size', default=256, type=int, help='Image size')
     parser.add_argument('--attn_dropout', type=float, default=0.0, help='Attention dropout rate')
     parser.add_argument('--proj_dropout', type=float, default=0.0, help='Projection dropout rate')
+    parser.add_argument('--use_pretrained', action='store_true',
+                        help='Use ImageNet pretrained weights for initialization')
+    parser.add_argument('--pretrained_path', type=str, default='',
+                        help='Path to pretrained checkpoint to load when using pretrained weights')
 
     # training
     parser.add_argument('--epochs', default=200, type=int)

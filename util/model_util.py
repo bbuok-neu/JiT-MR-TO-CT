@@ -115,6 +115,7 @@ class VisionRotaryEmbeddingFast(nn.Module):
         freqs = repeat(freqs, '... n -> ... (n r)', r = 2)
         freqs = broadcat((freqs[:, None, :], freqs[None, :, :]), dim = -1)
 
+        device = freqs.device
         if num_cls_token > 0:
             freqs_flat = freqs.view(-1, freqs.shape[-1])  # [N_img, D]
             cos_img = freqs_flat.cos()
@@ -125,11 +126,11 @@ class VisionRotaryEmbeddingFast(nn.Module):
             cos_pad = torch.ones(num_cls_token, D, dtype=cos_img.dtype, device=cos_img.device)
             sin_pad = torch.zeros(num_cls_token, D, dtype=sin_img.dtype, device=sin_img.device)
 
-            self.freqs_cos = torch.cat([cos_pad, cos_img], dim=0).cuda()  # [N_cls+N_img, D]
-            self.freqs_sin = torch.cat([sin_pad, sin_img], dim=0).cuda()
+            self.freqs_cos = torch.cat([cos_pad, cos_img], dim=0).to(device)  # [N_cls+N_img, D]
+            self.freqs_sin = torch.cat([sin_pad, sin_img], dim=0).to(device)
         else:
-            self.freqs_cos = freqs.cos().view(-1, freqs.shape[-1]).cuda()
-            self.freqs_sin = freqs.sin().view(-1, freqs.shape[-1]).cuda()
+            self.freqs_cos = freqs.cos().view(-1, freqs.shape[-1]).to(device)
+            self.freqs_sin = freqs.sin().view(-1, freqs.shape[-1]).to(device)
 
     def forward(self, t): return  t * self.freqs_cos + rotate_half(t) * self.freqs_sin
 

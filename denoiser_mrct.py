@@ -1,8 +1,9 @@
 """
-Denoiser for MR-to-CT Synthesis
-Modified to concatenate MR with zt at each step
-Prediction: vθ = (xθ - concat(zt, mr))/(1-t)
+ Denoiser for MR-to-CT Synthesis
+ Modified to concatenate MR with zt at each step
+ Prediction: vθ = (xθ - concat(zt, mr))/(1-t)
 """
+import os
 import torch
 import torch.nn as nn
 from model_mrct import JiT_MRCT_models
@@ -16,11 +17,14 @@ class Denoiser_MRCT(nn.Module):
         super().__init__()
         self.net = JiT_MRCT_models[args.model](
             input_size=args.img_size,
-            in_channels=2,  # zt + MR condition
+            in_channels=6,  # 3-channel zt + 3-channel MR condition
+            out_channels=3,
             attn_drop=args.attn_dropout,
             proj_drop=args.proj_dropout,
         )
         self.img_size = args.img_size
+        self.use_pretrained = getattr(args, "use_pretrained", False)
+        self.pretrained_path = getattr(args, "pretrained_path", "")
 
         self.P_mean = args.P_mean
         self.P_std = args.P_std
@@ -37,6 +41,42 @@ class Denoiser_MRCT(nn.Module):
         self.method = args.sampling_method
         self.steps = args.num_sampling_steps
 
+        if self.use_pretrained and self.pretrained_path:
+            self._load_pretrained_weights(self.pretrained_path)
+
+    def _to_three_channels(self, x: torch.Tensor) -> torch.Tensor:
+        if x.dim() == 4 and x.size(1) == 1:
+            return x.repeat(1, 3, 1, 1)
+        return x
+
+    def _load_pretrained_weights(self, path: str):
+        if not os.path.exists(path):
+            print(f"Pretrained weight path {path} not found. Skipping pretrained loading.")
+            return
+        checkpoint = torch.load(path, map_location="cpu")
+        state_dict = checkpoint.get("model", checkpoint)
+        processed_state_dict = {}
+        for k, v in state_dict.items():
+            new_key = k
+            if new_key.startswith("module."):
+                new_key = new_key[len("module."):]
+            if new_key.startswith("net."):
+                new_key = new_key[len("net."):]
+            processed_state_dict[new_key] = v
+
+        patch_key = "x_embedder.proj1.weight"
+        if patch_key in processed_state_dict:
+            w = processed_state_dict[patch_key]
+            if w.shape[1] == 3 and self.net.in_channels == 6:
+                processed_state_dict[patch_key] = w.repeat(1, 2, 1, 1)
+
+        missing, unexpected = self.net.load_state_dict(processed_state_dict, strict=False)
+        print(f"Loaded pretrained weights from {path}")
+        if missing:
+            print(f"Missing keys (ignored): {missing}")
+        if unexpected:
+            print(f"Unexpected keys (ignored): {unexpected}")
+
     def sample_t(self, n: int, device=None):
         z = torch.randn(n, device=device) * self.P_std + self.P_mean
         return torch.sigmoid(z)
@@ -52,6 +92,9 @@ class Denoiser_MRCT(nn.Module):
         Returns:
             loss: L2 loss between predicted and true velocity
         """
+        ct = self._to_three_channels(ct)
+        mr = self._to_three_channels(mr)
+
         t = self.sample_t(ct.size(0), device=ct.device).view(-1, *([1] * (ct.ndim - 1)))
         e = torch.randn_like(ct) * self.noise_scale
 
@@ -62,7 +105,7 @@ class Denoiser_MRCT(nn.Module):
         v = (ct - zt) / (1 - t).clamp_min(self.t_eps)
 
         # Concatenate zt and MR condition
-        concat_input = torch.cat([zt, mr], dim=1)  # (N, 2, H, W)
+        concat_input = torch.cat([zt, mr], dim=1)  # (N, 6, H, W)
         
         # Predict CT from concatenated input
         ct_pred = self.net(concat_input, t.flatten())
@@ -81,10 +124,10 @@ class Denoiser_MRCT(nn.Module):
     @torch.no_grad()
     def generate(self, mr):
         """
-        Generate CT from MR image using trained model
+         Generate CT from MR image using trained model
         
         Args:
-            mr: Condition MR image (N, 1, H, W)
+         mr: Condition MR image (N, 1, H, W) or (N, 3, H, W)
         
         Returns:
             Generated CT image (N, 1, H, W)
@@ -93,7 +136,8 @@ class Denoiser_MRCT(nn.Module):
         bsz = mr.size(0)
         
         # Initialize with noise
-        z = self.noise_scale * torch.randn(bsz, 1, self.img_size, self.img_size, device=device)
+        mr = self._to_three_channels(mr)
+        z = self.noise_scale * torch.randn(bsz, 3, self.img_size, self.img_size, device=device)
         timesteps = torch.linspace(0.0, 1.0, self.steps+1, device=device).view(-1, *([1] * z.ndim)).expand(-1, bsz, -1, -1, -1)
 
         if self.method == "euler":
@@ -126,8 +170,9 @@ class Denoiser_MRCT(nn.Module):
         Returns:
             Predicted velocity
         """
+        mr = self._to_three_channels(mr)
         # Concatenate z and MR condition
-        concat_input = torch.cat([z, mr], dim=1)  # (N, 2, H, W)
+        concat_input = torch.cat([z, mr], dim=1)  # (N, 6, H, W)
         
         # Predict CT
         ct_pred = self.net(concat_input, t.flatten())

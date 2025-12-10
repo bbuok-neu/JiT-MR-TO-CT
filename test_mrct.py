@@ -103,7 +103,7 @@ def test_model_creation():
     try:
         # Create model
         model_fn = JiT_MRCT_models['JiT-B/16']
-        model = model_fn(input_size=128, in_channels=2)
+        model = model_fn(input_size=128, in_channels=6, out_channels=3)
         
         print(f"Model created successfully")
         n_params = sum(p.numel() for p in model.parameters())
@@ -111,7 +111,7 @@ def test_model_creation():
         
         # Test forward pass
         batch_size = 2
-        x = torch.randn(batch_size, 2, 128, 128)  # 2 channels: zt + MR
+        x = torch.randn(batch_size, 6, 128, 128)  # 6 channels: zt + MR (3 each)
         t = torch.rand(batch_size)
         
         with torch.no_grad():
@@ -120,8 +120,8 @@ def test_model_creation():
         print(f"Input shape: {x.shape}")
         print(f"Output shape: {output.shape}")
         
-        assert output.shape == (batch_size, 1, 128, 128), \
-            f"Expected shape ({batch_size}, 1, 128, 128), got {output.shape}"
+        assert output.shape == (batch_size, 3, 128, 128), \
+            f"Expected shape ({batch_size}, 3, 128, 128), got {output.shape}"
         
         print("✓ Model creation test passed!")
         return True
@@ -156,6 +156,8 @@ def test_denoiser():
             ema_decay2 = 0.9996
             sampling_method = 'euler'
             num_sampling_steps = 10  # Reduced for testing
+            use_pretrained = False
+            pretrained_path = ''
         
         args = Args()
         
@@ -182,8 +184,8 @@ def test_denoiser():
             generated_ct = denoiser.generate(mr)
         
         print(f"Generated CT shape: {generated_ct.shape}")
-        assert generated_ct.shape == (batch_size, 1, 128, 128), \
-            f"Expected shape ({batch_size}, 1, 128, 128), got {generated_ct.shape}"
+        assert generated_ct.shape == (batch_size, 3, 128, 128), \
+            f"Expected shape ({batch_size}, 3, 128, 128), got {generated_ct.shape}"
         
         print("✓ Denoiser test passed!")
         return True
@@ -280,6 +282,54 @@ def test_dataloader():
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def test_pretrained_patch_expansion():
+    """
+    Test that pretrained patch embedding weights are expanded for 6-channel input
+    """
+    print("\n" + "="*50)
+    print("TEST 6: Pretrained Patch Expansion")
+    print("="*50)
+    temp_dir = tempfile.mkdtemp()
+    try:
+        weight = torch.randn(64, 3, 8, 8)
+        checkpoint = {'model': {'net.x_embedder.proj1.weight': weight}}
+        path = os.path.join(temp_dir, "pretrained.pth")
+        torch.save(checkpoint, path)
+
+        class Args:
+            model = 'JiT-B/8'
+            img_size = 128
+            attn_dropout = 0.0
+            proj_dropout = 0.0
+            P_mean = -0.8
+            P_std = 0.8
+            noise_scale = 1.0
+            t_eps = 5e-2
+            ema_decay1 = 0.9999
+            ema_decay2 = 0.9996
+            sampling_method = 'euler'
+            num_sampling_steps = 4
+            use_pretrained = True
+            pretrained_path = path
+
+        args = Args()
+        denoiser = Denoiser_MRCT(args)
+        loaded_weight = denoiser.net.x_embedder.proj1.weight.detach()
+        assert loaded_weight.shape[1] == 6, f"Expected 6 input channels, got {loaded_weight.shape[1]}"
+        assert torch.allclose(loaded_weight[:, :3], weight), "First 3 channels should match pretrained"
+        assert torch.allclose(loaded_weight[:, 3:], weight), "Last 3 channels should be duplicated pretrained weights"
+
+        print("✓ Pretrained patch expansion test passed!")
+        return True
+    except Exception as e:
+        print(f"✗ Pretrained patch expansion test failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
 def main():
     """
     Run all tests
@@ -294,6 +344,7 @@ def main():
         ("Denoiser", test_denoiser),
         ("Metrics", test_metrics),
         ("DataLoader", test_dataloader),
+        ("Pretrained Patch Expansion", test_pretrained_patch_expansion),
     ]
     
     results = []

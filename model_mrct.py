@@ -1,8 +1,8 @@
 # --------------------------------------------------------
 # Modified JiT Model for MR-to-CT Synthesis
 # Key changes: 
-# - Input channels = 2 (1 for MR condition, 1 for zt)
-# - Output channels = 1 (CT image)
+# - Default input channels = 2 (1 for MR condition, 1 for zt)
+# - Default output channels = 1 (CT image)
 # - No class conditioning (uses MR as condition)
 # --------------------------------------------------------
 import torch
@@ -201,6 +201,7 @@ class JiT_MRCT(nn.Module):
         input_size=256,
         patch_size=16,
         in_channels=2,  # 1 for zt, 1 for MR condition
+        out_channels=1,
         hidden_size=1024,
         depth=24,
         num_heads=16,
@@ -213,7 +214,7 @@ class JiT_MRCT(nn.Module):
     ):
         super().__init__()
         self.in_channels = in_channels
-        self.out_channels = 1  # CT output is single channel
+        self.out_channels = out_channels
         self.patch_size = patch_size
         self.num_heads = num_heads
         self.hidden_size = hidden_size

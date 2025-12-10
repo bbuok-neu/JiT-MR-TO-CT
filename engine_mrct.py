@@ -124,13 +124,18 @@ def evaluate(model_without_ddp, test_loader, args, epoch, log_writer=None, save_
         # So: ct = ct_norm * ct_std + ct_mean
         ct_pred_denorm = ct_pred * args.ct_std + args.ct_mean
         ct_true_denorm = ct_true * args.ct_std + args.ct_mean
+
+        if ct_true_denorm.shape[1] == 1 and ct_pred_denorm.shape[1] > 1:
+            ct_true_denorm_for_metrics = ct_true_denorm.repeat(1, ct_pred_denorm.shape[1], 1, 1)
+        else:
+            ct_true_denorm_for_metrics = ct_true_denorm
         
         # Clamp to [0, 1] for metrics
         ct_pred_denorm = torch.clamp(ct_pred_denorm, 0.0, 1.0)
         ct_true_denorm = torch.clamp(ct_true_denorm, 0.0, 1.0)
         
         # Calculate metrics for batch
-        metrics = evaluate_metrics(ct_pred_denorm, ct_true_denorm)
+        metrics = evaluate_metrics(ct_pred_denorm, ct_true_denorm_for_metrics)
         metric_tracker.update(metrics['psnr'], metrics['ssim'], batch_size=mr.size(0))
         
         # Save images (only from rank 0)
