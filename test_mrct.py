@@ -330,6 +330,27 @@ def test_pretrained_patch_expansion():
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def test_rotary_embedding_buffers():
+    """
+    Ensure rotary embeddings register frequency tensors as buffers and move with the module.
+    """
+    from util.model_util import VisionRotaryEmbeddingFast
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    emb = VisionRotaryEmbeddingFast(dim=8, pt_seq_len=2)
+
+    buffers = dict(emb.named_buffers())
+    assert "freqs_cos" in buffers, "freqs_cos should be registered as a buffer"
+    assert "freqs_sin" in buffers, "freqs_sin should be registered as a buffer"
+
+    emb = emb.to(device)
+    seq_len, feature_dim = emb.freqs_cos.shape
+    t = torch.randn(1, seq_len, feature_dim, device=device)
+    out = emb(t)
+    assert out.device == device, "Output device should follow the module device"
+    return True
+
+
 def main():
     """
     Run all tests
@@ -345,6 +366,7 @@ def main():
         ("Metrics", test_metrics),
         ("DataLoader", test_dataloader),
         ("Pretrained Patch Expansion", test_pretrained_patch_expansion),
+        ("Rotary Embedding Buffers", test_rotary_embedding_buffers),
     ]
     
     results = []
