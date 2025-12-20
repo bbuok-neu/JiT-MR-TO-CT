@@ -148,19 +148,19 @@ def evaluate(model_without_ddp, test_loader, args, epoch, log_writer=None, save_
                 ct_pred_img = ct_pred_denorm[b_id, 0].cpu().numpy()
                 
                 # Clip to [0, 1] and convert to uint8
-                mr_img = np.clip(mr_img, 0, 1) * 255
-                ct_true_img = np.clip(ct_true_img, 0, 1) * 255
+                # mr_img = np.clip(mr_img, 0, 1) * 255
+                # ct_true_img = np.clip(ct_true_img, 0, 1) * 255
                 ct_pred_img = np.clip(ct_pred_img, 0, 1) * 255
                 
                 # Save as images
-                cv2.imwrite(
-                    os.path.join(save_folder, f'{str(img_idx).zfill(5)}_mr.png'),
-                    mr_img.astype(np.uint8)
-                )
-                cv2.imwrite(
-                    os.path.join(save_folder, f'{str(img_idx).zfill(5)}_ct_true.png'),
-                    ct_true_img.astype(np.uint8)
-                )
+                # cv2.imwrite(
+                #     os.path.join(save_folder, f'{str(img_idx).zfill(5)}_mr.png'),
+                #     mr_img.astype(np.uint8)
+                # )
+                # cv2.imwrite(
+                #     os.path.join(save_folder, f'{str(img_idx).zfill(5)}_ct_true.png'),
+                #     ct_true_img.astype(np.uint8)
+                # )
                 cv2.imwrite(
                     os.path.join(save_folder, f'{str(img_idx).zfill(5)}_ct_pred.png'),
                     ct_pred_img.astype(np.uint8)

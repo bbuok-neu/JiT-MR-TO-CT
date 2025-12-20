@@ -48,7 +48,7 @@ class PairedMedicalAugmentation:
         cutout_num_holes: Tuple[int, int] = (1, 3),
         cutout_max_size: Tuple[int, int] = (20, 40),
         # General settings
-        augmentation_probability: float = 0.8,
+        augmentation_probability: float = 0.5,
         use_torchio: bool = True
     ):
         """

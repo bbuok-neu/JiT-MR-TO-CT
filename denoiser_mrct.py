@@ -67,12 +67,30 @@ class Denoiser_MRCT(nn.Module):
         patch_key = "x_embedder.proj1.weight"
         if patch_key in processed_state_dict:
             w = processed_state_dict[patch_key]
-            if self.net.in_channels % w.shape[1] == 0:
-                repeat_factor = self.net.in_channels // w.shape[1]
-                # Expand pretrained patch embedding weights to match duplicated MR + zt channels
-                processed_state_dict[patch_key] = w.repeat(1, repeat_factor, 1, 1)
+            pretrained_in_ch = w.shape[1]
+            target_in_ch = self.net.in_channels
+
+            if target_in_ch >= pretrained_in_ch:
+                # 1. 创建目标形状的全零 Tensor
+                new_w = torch.zeros(
+                    (w.shape[0], target_in_ch, w.shape[2], w.shape[3]),
+                    dtype=w.dtype,
+                    device=w.device
+                )
+
+                new_w[:, :pretrained_in_ch, :, :] = w
+                processed_state_dict[patch_key] = new_w
+                print(
+                    f"Custom Init: Patch embed weights initialized. First {pretrained_in_ch} channels loaded from pretrained, remaining {target_in_ch - pretrained_in_ch} channels initialized to Zero.")
             else:
-                raise ValueError(f"Pretrained patch embedding channels ({w.shape[1]}) do not divide target in_channels {self.net.in_channels}.")
+                raise ValueError(
+                    f"Pretrained channels ({pretrained_in_ch}) are larger than target channels ({target_in_ch}). Cannot load.")
+            # if self.net.in_channels % w.shape[1] == 0:
+            #     repeat_factor = self.net.in_channels // w.shape[1]
+            #     # Expand pretrained patch embedding weights to match duplicated MR + zt channels
+            #     processed_state_dict[patch_key] = w.repeat(1, repeat_factor, 1, 1)
+            # else:
+            #     raise ValueError(f"Pretrained patch embedding channels ({w.shape[1]}) do not divide target in_channels {self.net.in_channels}.")
 
         missing, unexpected = self.net.load_state_dict(processed_state_dict, strict=False)
         print(f"Loaded pretrained weights from {path}")
