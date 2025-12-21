@@ -32,7 +32,7 @@ class TimestepEmbedding(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(embedding_dim, embedding_dim * 4),
             nn.SiLU(),
-            nn.Linear(embedding_dim * 4, embedding_dim * 4),
+            nn.Linear(embedding_dim * 4, embedding_dim),
         )
     
     def timestep_embedding(self, timesteps, dim, max_period=10000):
@@ -132,6 +132,47 @@ class AttentionBlock(nn.Module):
         return x + out
 
 
+class ChannelBottleneck(nn.Module):
+    """
+    Channel bottleneck layer that reduces and then expands channel dimensions.
+    This helps with computational efficiency and can act as a form of regularization.
+    
+    The layer performs: in_channels -> bottleneck_channels -> out_channels
+    with optional normalization and activation between the projections.
+    """
+    def __init__(self, in_channels, out_channels, bottleneck_channels, use_norm=True, use_activation=True):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.bottleneck_channels = bottleneck_channels
+        
+        # Projection down to bottleneck dimension
+        self.proj_down = nn.Conv2d(in_channels, bottleneck_channels, kernel_size=1, bias=False)
+        
+        # Optional normalization and activation
+        if use_norm:
+            # Use min of bottleneck_channels and 32 for group norm to handle small channel counts
+            num_groups = min(32, bottleneck_channels)
+            # Ensure num_groups divides bottleneck_channels evenly
+            while bottleneck_channels % num_groups != 0:
+                num_groups -= 1
+            self.norm = nn.GroupNorm(num_groups, bottleneck_channels)
+        else:
+            self.norm = nn.Identity()
+        
+        self.activation = nn.SiLU() if use_activation else nn.Identity()
+        
+        # Projection up to output dimension
+        self.proj_up = nn.Conv2d(bottleneck_channels, out_channels, kernel_size=1, bias=True)
+    
+    def forward(self, x):
+        h = self.proj_down(x)
+        h = self.norm(h)
+        h = self.activation(h)
+        h = self.proj_up(h)
+        return h
+
+
 class Downsample(nn.Module):
     """
     Downsampling layer.
@@ -162,6 +203,20 @@ class DiffusionModelUNet(nn.Module):
     """
     U-Net model for diffusion with timestep conditioning.
     Configured for MR-to-CT synthesis with 2-channel input and 1-channel output.
+    
+    Args:
+        spatial_dims: Number of spatial dimensions (2 for 2D images).
+        in_channels: Number of input channels.
+        out_channels: Number of output channels.
+        num_channels: Tuple of channel counts for each encoder/decoder level.
+        attention_levels: Tuple of booleans indicating whether to use attention at each level.
+        num_res_blocks: Number of residual blocks per level.
+        num_head_channels: Number of channels per attention head.
+        dropout: Dropout rate.
+        bottleneck_channels: If provided, adds a channel bottleneck layer at the middle block.
+            This reduces the channel dimension to bottleneck_channels before the middle 
+            processing and expands back afterwards, which can improve efficiency and 
+            act as regularization. Set to None to disable (default).
     """
     def __init__(
         self,
@@ -173,6 +228,7 @@ class DiffusionModelUNet(nn.Module):
         num_res_blocks=2,
         num_head_channels=32,
         dropout=0.0,
+        bottleneck_channels=None,
     ):
         super().__init__()
         
@@ -182,6 +238,7 @@ class DiffusionModelUNet(nn.Module):
         self.num_channels = num_channels
         self.attention_levels = attention_levels
         self.num_res_blocks = num_res_blocks
+        self.bottleneck_channels = bottleneck_channels
         
         # Timestep embedding
         time_embed_dim = num_channels[0] * 4
@@ -191,20 +248,25 @@ class DiffusionModelUNet(nn.Module):
         self.conv_in = nn.Conv2d(in_channels, num_channels[0], kernel_size=3, padding=1)
         
         # Encoder (downsampling path)
+        # down_blocks is organized by level, with each level containing num_res_blocks sets of layers
         self.down_blocks = nn.ModuleList()
         self.down_samples = nn.ModuleList()
         
         ch = num_channels[0]
         for i, ch_out in enumerate(num_channels):
+            # Create a module list for all blocks at this level
+            level_blocks = nn.ModuleList()
             for j in range(num_res_blocks):
-                layers = [ResidualBlock(ch, ch_out, time_embed_dim, dropout)]
+                layers = nn.ModuleList([ResidualBlock(ch, ch_out, time_embed_dim, dropout)])
                 ch = ch_out
                 
                 if attention_levels[i]:
                     num_heads = ch // num_head_channels
                     layers.append(AttentionBlock(ch, num_heads))
                 
-                self.down_blocks.append(nn.ModuleList(layers))
+                level_blocks.append(layers)
+            
+            self.down_blocks.append(level_blocks)
             
             # Downsample (except for the last level)
             if i < len(num_channels) - 1:
@@ -212,10 +274,36 @@ class DiffusionModelUNet(nn.Module):
             else:
                 self.down_samples.append(nn.Identity())
         
+        # Channel bottleneck before middle block (optional)
+        if bottleneck_channels is not None:
+            self.bottleneck_down = ChannelBottleneck(
+                in_channels=ch, 
+                out_channels=bottleneck_channels, 
+                bottleneck_channels=bottleneck_channels,
+                use_norm=True,
+                use_activation=True
+            )
+            middle_ch = bottleneck_channels
+        else:
+            self.bottleneck_down = None
+            middle_ch = ch
+        
         # Middle block
-        self.mid_block1 = ResidualBlock(ch, ch, time_embed_dim, dropout)
-        self.mid_attn = AttentionBlock(ch, ch // num_head_channels)
-        self.mid_block2 = ResidualBlock(ch, ch, time_embed_dim, dropout)
+        self.mid_block1 = ResidualBlock(middle_ch, middle_ch, time_embed_dim, dropout)
+        self.mid_attn = AttentionBlock(middle_ch, max(1, middle_ch // num_head_channels))
+        self.mid_block2 = ResidualBlock(middle_ch, middle_ch, time_embed_dim, dropout)
+        
+        # Channel expansion after middle block (if bottleneck is used)
+        if bottleneck_channels is not None:
+            self.bottleneck_up = ChannelBottleneck(
+                in_channels=middle_ch, 
+                out_channels=ch, 
+                bottleneck_channels=bottleneck_channels,
+                use_norm=True,
+                use_activation=True
+            )
+        else:
+            self.bottleneck_up = None
         
         # Decoder (upsampling path)
         self.up_blocks = nn.ModuleList()
@@ -268,13 +356,14 @@ class DiffusionModelUNet(nn.Module):
         
         # Encoder
         hs = [h]  # Save initial features
-        for i, (blocks, downsample) in enumerate(zip(self.down_blocks, self.down_samples)):
-            # Process blocks at this level
-            for layer in blocks:
-                if isinstance(layer, ResidualBlock):
-                    h = layer(h, temb)
-                else:
-                    h = layer(h)
+        for level_idx, (level_blocks, downsample) in enumerate(zip(self.down_blocks, self.down_samples)):
+            # Process all blocks at this level
+            for blocks in level_blocks:
+                for layer in blocks:
+                    if isinstance(layer, ResidualBlock):
+                        h = layer(h, temb)
+                    else:
+                        h = layer(h)
             # Save features BEFORE downsampling (for skip connections in decoder)
             # These features are at the same resolution as where the decoder will upsample back to
             hs.append(h)
@@ -282,9 +371,17 @@ class DiffusionModelUNet(nn.Module):
             h = downsample(h)
         
         # Middle
+        # Apply channel bottleneck down if enabled
+        if self.bottleneck_down is not None:
+            h = self.bottleneck_down(h)
+        
         h = self.mid_block1(h, temb)
         h = self.mid_attn(h)
         h = self.mid_block2(h, temb)
+        
+        # Apply channel bottleneck up if enabled
+        if self.bottleneck_up is not None:
+            h = self.bottleneck_up(h)
         
         # Decoder
         # Process decoder levels in reverse order (from coarsest to finest resolution)
