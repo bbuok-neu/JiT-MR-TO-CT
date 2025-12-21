@@ -1,11 +1,14 @@
 """
-Denoiser for MR-to-CT Synthesis using MONAI's DiffusionModelUNet
+Denoiser for MR-to-CT Synthesis using ChannelBottleneckDiffusionModelUNet
 Modified to concatenate MR with zt at each step
 Prediction: vθ = (xθ - zt)/(1-t), where input is concat(zt, mr)
+
+Uses channel bottleneck layer (512 → 128 → 512) between down_blocks and mid_blocks
+to mimic JiT's ViT dimension bottleneck design for low-dimensional manifold learning.
 """
 import torch
 import torch.nn as nn
-from generative.networks.nets import DiffusionModelUNet
+from channel_bottleneck_unet import ChannelBottleneckDiffusionModelUNet
 
 
 class Denoiser_MRCT(nn.Module):
@@ -14,10 +17,12 @@ class Denoiser_MRCT(nn.Module):
         args
     ):
         super().__init__()
-        # Use MONAI's DiffusionModelUNet for MR-to-CT synthesis
+        # Use ChannelBottleneckDiffusionModelUNet for MR-to-CT synthesis
+        # This adds a channel bottleneck layer between down_blocks and mid_blocks
+        # to force low-dimensional manifold learning (similar to JiT's BottleneckPatchEmbed)
         # Input: 2 channels (zt + MR condition)
         # Output: 1 channel (predicted CT)
-        self.net = DiffusionModelUNet(
+        self.net = ChannelBottleneckDiffusionModelUNet(
             spatial_dims=2,
             in_channels=2,  # zt (1ch) + MR condition (1ch)
             out_channels=1,  # predicted CT
@@ -28,6 +33,7 @@ class Denoiser_MRCT(nn.Module):
             num_head_channels=(64, 128, 256, 512),  # Typically matching num_channels (MONAI best practice)
             with_conditioning=False,  # We use concatenation, not cross-attention conditioning
             resblock_updown=True,  # Include updown sampling in residual blocks
+            bottleneck_channels=128,  # Channel bottleneck: 512 → 128 → 512
         )
         self.img_size = args.img_size
 
