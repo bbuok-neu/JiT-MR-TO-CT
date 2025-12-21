@@ -9,9 +9,14 @@ bottleneck design to force the network to perform low-dimensional manifold learn
 Reference: JiT model's BottleneckPatchEmbed design in model_jit.py
 """
 
+from __future__ import annotations
+
+from typing import Optional, Tuple
+
 import torch
 import torch.nn as nn
 from generative.networks.nets import DiffusionModelUNet
+from generative.networks.nets.diffusion_model_unet import get_timestep_embedding
 
 
 class ChannelBottleneck(nn.Module):
@@ -133,10 +138,10 @@ class ChannelBottleneckDiffusionModelUNet(DiffusionModelUNet):
         self,
         x: torch.Tensor,
         timesteps: torch.Tensor,
-        context: torch.Tensor | None = None,
-        class_labels: torch.Tensor | None = None,
-        down_block_additional_residuals: tuple[torch.Tensor] | None = None,
-        mid_block_additional_residual: torch.Tensor | None = None,
+        context: Optional[torch.Tensor] = None,
+        class_labels: Optional[torch.Tensor] = None,
+        down_block_additional_residuals: Optional[Tuple[torch.Tensor, ...]] = None,
+        mid_block_additional_residual: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Forward pass with channel bottleneck between down_blocks and mid_blocks.
@@ -152,9 +157,6 @@ class ChannelBottleneckDiffusionModelUNet(DiffusionModelUNet):
         Returns:
             Output tensor of shape (N, out_channels, SpatialDims).
         """
-        # Import the timestep embedding function from the parent module
-        from generative.networks.nets.diffusion_model_unet import get_timestep_embedding
-        
         # 1. time
         t_emb = get_timestep_embedding(timesteps, self.block_out_channels[0])
         t_emb = t_emb.to(dtype=x.dtype)
@@ -182,12 +184,12 @@ class ChannelBottleneckDiffusionModelUNet(DiffusionModelUNet):
         
         # Additional residual connections for ControlNets
         if down_block_additional_residuals is not None:
-            new_down_block_res_samples = ()
+            new_down_block_res_samples = []
             for down_block_res_sample, down_block_additional_residual in zip(
                 down_block_res_samples, down_block_additional_residuals
             ):
                 down_block_res_sample = down_block_res_sample + down_block_additional_residual
-                new_down_block_res_samples += (down_block_res_sample,)
+                new_down_block_res_samples.append(down_block_res_sample)
             down_block_res_samples = new_down_block_res_samples
         
         # *** CHANNEL BOTTLENECK: Apply between down_blocks and mid_blocks ***
