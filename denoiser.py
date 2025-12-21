@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from generative.networks.nets import DiffusionModelUNet
+from channel_bottleneck_unet import ChannelBottleneckDiffusionModelUNet
 
 
 class Denoiser(nn.Module):
@@ -9,16 +9,18 @@ class Denoiser(nn.Module):
         args
     ):
         super().__init__()
-        # Use MONAI's DiffusionModelUNet for conditional MR-to-CT synthesis
+        # Use ChannelBottleneckDiffusionModelUNet for conditional MR-to-CT synthesis
+        # This is a modified MONAI DiffusionModelUNet with channel bottleneck layer
+        # that mimics JiT's ViT dimension bottleneck for low-dimensional manifold learning.
         # Configure for 2-channel input (noisy_latent + condition) and 1-channel output
         # For MR-to-CT: both MR and CT are grayscale (1 channel each)
         self.condition_channels = getattr(args, 'condition_channels', 1)  # MR condition channels
         self.target_channels = getattr(args, 'target_channels', 1)  # CT target channels
         
-        # Initialize MONAI DiffusionModelUNet
+        # Initialize ChannelBottleneckDiffusionModelUNet
+        # Channel bottleneck: 512 → 128 → 512 between down_blocks and mid_blocks
         # Reference: https://github.com/Project-MONAI/GenerativeModels
-        # Example usage from MOTFM: https://github.com/milad1378yz/MOTFM
-        self.net = DiffusionModelUNet(
+        self.net = ChannelBottleneckDiffusionModelUNet(
             spatial_dims=2,
             in_channels=self.target_channels + self.condition_channels,  # noisy target + condition
             out_channels=self.target_channels,  # predicted target
@@ -29,6 +31,7 @@ class Denoiser(nn.Module):
             num_head_channels=(64, 128, 256, 512),  # MONAI expects tuple/list, typically matching num_channels
             with_conditioning=False,  # We use concatenation, not cross-attention conditioning
             resblock_updown=True,  # Include updown sampling in residual blocks
+            bottleneck_channels=128,  # Channel bottleneck: 512 → 128 → 512
         )
         self.img_size = args.img_size
         self.num_classes = args.class_num
