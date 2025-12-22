@@ -13,7 +13,8 @@ This document provides a detailed technical analysis comparing the timestep embe
    - [ViT Attention Normalization (RMSNorm)](#vit-attention-normalization)
    - [Comparison](#attention-normalization-comparison)
 3. [Summary](#summary)
-4. [Implications for MR-to-CT Synthesis](#implications-for-mr-to-ct-synthesis)
+4. [AttentionBlock GroupNorm vs RMSNorm Analysis](#attentionblock-groupnorm-vs-rmsnorm-analysis)
+5. [Implications for MR-to-CT Synthesis](#implications-for-mr-to-ct-synthesis)
 
 ---
 
@@ -404,6 +405,150 @@ x = x + gate_msa.unsqueeze(1) * self.attn(
 | Bias Term | Yes | **No** |
 | QK Norm | No | **Yes** |
 | adaLN Modulation | No | **Yes** |
+
+---
+
+## AttentionBlock GroupNorm vs RMSNorm Analysis
+
+This section specifically analyzes whether replacing **GroupNorm** with **RMSNorm** in the `AttentionBlock` would provide performance benefits for the following configuration:
+
+```python
+self.net = DiffusionModelUNet(
+    spatial_dims=2,
+    in_channels=2,  # zt (1ch) + MR condition (1ch)
+    out_channels=1,  # predicted CT
+    num_res_blocks=(2, 2, 2, 2),
+    num_channels=(64, 128, 256, 512),
+    attention_levels=(False, False, True, True),  # AttentionBlock at levels 2,3
+    norm_num_groups=32,
+    num_head_channels=(64, 128, 256, 512),
+    with_conditioning=False,  # Uses AttentionBlock, NOT SpatialTransformer
+    resblock_updown=True,
+)
+```
+
+### Current AttentionBlock Normalization
+
+```python
+# diffusion_model_unet.py, AttentionBlock.__init__ (line 377)
+self.norm = nn.GroupNorm(num_groups=norm_num_groups, num_channels=num_channels, eps=norm_eps, affine=True)
+
+# AttentionBlock.forward (line 428)
+x = self.norm(x)  # Applied before reshaping to sequence
+```
+
+### Analysis: Should You Replace GroupNorm with RMSNorm?
+
+#### 1. Computational Considerations
+
+| Metric | GroupNorm | RMSNorm | Winner |
+|--------|-----------|---------|--------|
+| Forward FLOPs | Higher (mean + var) | Lower (only var) | RMSNorm |
+| Backward FLOPs | Higher | Lower | RMSNorm |
+| Parameters | 2N (γ, β) | N (γ only) | RMSNorm |
+| Memory | ~Same | ~Same | Tie |
+
+**Estimated speedup**: ~10-15% faster normalization (based on computational complexity: RMSNorm skips mean computation), but normalization is typically <5% of total computation in attention blocks.
+
+#### 2. Spatial vs Sequence Normalization
+
+**Key Issue**: GroupNorm operates on spatial features (C, H, W), while RMSNorm operates on sequence features (N, L, D).
+
+```python
+# GroupNorm in AttentionBlock (current)
+# Input shape: (B, C, H, W) - SPATIAL format
+x = self.norm(x)  # GroupNorm works on channel groups across H×W
+
+# After reshaping to sequence:
+x = x.view(batch, channel, height * width).transpose(1, 2)  # (B, L, C)
+# Then attention is computed
+```
+
+**If RMSNorm were used**:
+```python
+# Would need to reshape BEFORE normalization:
+x = x.view(batch, channel, height * width).transpose(1, 2)  # (B, L, C)
+x = self.norm(x)  # RMSNorm on (B, L, C)
+```
+
+This changes the normalization semantics:
+- **GroupNorm**: Normalizes across spatial positions within channel groups
+- **RMSNorm**: Normalizes across channels for each spatial position
+
+#### 3. Practical Recommendations
+
+| Scenario | Recommendation | Reason |
+|----------|---------------|--------|
+| **Standard training** | Keep GroupNorm | Batch-size independence, proven stability |
+| **Large batch sizes** (≥32) | Consider RMSNorm | Slight speedup, similar stability |
+| **Training instability** | Add QK-Norm instead | More impact than changing pre-norm |
+| **Maximum performance** | Custom hybrid | See below |
+
+#### 4. Hybrid Approach (Best of Both Worlds)
+
+If you want to experiment with RMSNorm-like efficiency while maintaining GroupNorm's spatial awareness, consider:
+
+```python
+class SpatialRMSNorm(nn.Module):
+    """RMSNorm adapted for spatial features (B, C, H, W)"""
+    def __init__(self, num_channels, eps=1e-6):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(num_channels))
+        self.eps = eps
+    
+    def forward(self, x):
+        # x: (B, C, H, W)
+        # Compute RMS over spatial dimensions for each channel
+        rms = x.pow(2).mean(dim=[2, 3], keepdim=True).add(self.eps).sqrt()
+        return x / rms * self.weight.view(1, -1, 1, 1)
+```
+
+#### 5. QK-Normalization: Higher Impact Alternative
+
+Instead of changing pre-attention normalization, consider adding **QK-normalization** (as used in JiT):
+
+```python
+# In AttentionBlock, add after linear projections:
+self.q_norm = RMSNorm(head_dim)  # Normalize per head
+self.k_norm = RMSNorm(head_dim)
+
+def forward(self, x):
+    # ... existing code ...
+    # Assume x has been reshaped to (batch_size, seq_len, channels)
+    batch_size, seq_len, channels = x.shape
+    query = self.to_q(x)
+    key = self.to_k(x)
+    
+    # ADD: QK normalization for stability
+    query = query.view(batch_size, seq_len, num_heads, head_dim)
+    key = key.view(batch_size, seq_len, num_heads, head_dim)
+    query = self.q_norm(query)
+    key = self.k_norm(key)
+    # ... continue with attention ...
+```
+
+**Benefits**:
+- Prevents attention logit explosion in deep networks
+- More impactful than pre-attention norm change
+- Used in modern architectures (JiT, LLaMA, etc.)
+
+### Conclusion
+
+**For your specific configuration**:
+
+1. **Replacing GroupNorm with RMSNorm**: **Not recommended** as primary optimization
+   - Marginal speedup (<2% overall)
+   - Different normalization semantics (sequence vs spatial)
+   - Requires code modification to MONAI's official implementation
+
+2. **Better alternatives**:
+   - **Add QK-normalization**: More impactful for training stability
+   - **Use flash attention**: Significant memory/speed improvement (already supported)
+   - **Reduce attention levels**: Only use attention at deepest level if memory constrained
+
+3. **If you want to experiment**:
+   - Keep GroupNorm but add QK-Norm (RMSNorm on Q and K after projection)
+   - This combines the stability of GroupNorm with the attention stability benefits of RMSNorm
 
 ---
 
