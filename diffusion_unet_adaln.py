@@ -17,6 +17,7 @@ References:
 
 from __future__ import annotations
 
+import importlib.util
 import math
 from collections.abc import Sequence
 from typing import Tuple
@@ -27,6 +28,16 @@ import torch.nn.functional as F
 from monai.networks.blocks import Convolution
 from monai.networks.layers.factories import Pool
 from monai.utils import ensure_tuple_rep
+
+# xformers for flash attention support
+if importlib.util.find_spec("xformers") is not None:
+    import xformers
+    import xformers.ops
+
+    has_xformers = True
+else:
+    xformers = None
+    has_xformers = False
 
 
 def zero_module(module: nn.Module) -> nn.Module:
@@ -364,6 +375,15 @@ class AdaLNAttentionBlock(nn.Module):
     """
     Attention block with adaLN modulation for timestep conditioning.
     Uses GroupNorm + adaLN modulation before attention.
+
+    Args:
+        spatial_dims: number of spatial dimensions.
+        num_channels: number of input channels.
+        temb_channels: number of timestep embedding channels.
+        num_head_channels: number of channels in each attention head.
+        norm_num_groups: number of groups involved for the group normalisation layer.
+        norm_eps: epsilon value to use for the normalisation.
+        use_flash_attention: if True, use flash attention for a memory efficient attention mechanism.
     """
     def __init__(
         self,
@@ -373,8 +393,10 @@ class AdaLNAttentionBlock(nn.Module):
         num_head_channels: int | None = None,
         norm_num_groups: int = 32,
         norm_eps: float = 1e-6,
+        use_flash_attention: bool = False,
     ) -> None:
         super().__init__()
+        self.use_flash_attention = use_flash_attention
         self.spatial_dims = spatial_dims
         self.num_channels = num_channels
         self.temb_channels = temb_channels
@@ -412,6 +434,15 @@ class AdaLNAttentionBlock(nn.Module):
         batch_size, seq_len, dim = x.shape
         x = x.reshape(batch_size // self.num_heads, self.num_heads, seq_len, dim)
         x = x.permute(0, 2, 1, 3).reshape(batch_size // self.num_heads, seq_len, dim * self.num_heads)
+        return x
+
+    def _memory_efficient_attention_xformers(
+        self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor
+    ) -> torch.Tensor:
+        query = query.contiguous()
+        key = key.contiguous()
+        value = value.contiguous()
+        x = xformers.ops.memory_efficient_attention(query, key, value, attn_bias=None)
         return x
 
     def _attention(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor) -> torch.Tensor:
@@ -456,8 +487,13 @@ class AdaLNAttentionBlock(nn.Module):
         key = self.reshape_heads_to_batch_dim(key)
         value = self.reshape_heads_to_batch_dim(value)
 
-        x = self._attention(query, key, value)
+        if self.use_flash_attention:
+            x = self._memory_efficient_attention_xformers(query, key, value)
+        else:
+            x = self._attention(query, key, value)
+
         x = self.reshape_batch_dim_to_heads(x)
+        x = x.to(query.dtype)
         x = self.proj_attn(x)
 
         if self.spatial_dims == 2:
@@ -552,6 +588,20 @@ class AdaLNDownBlock(nn.Module):
 class AdaLNAttnDownBlock(nn.Module):
     """
     Down block with adaLN-Zero ResNet blocks and attention.
+
+    Args:
+        spatial_dims: The number of spatial dimensions.
+        in_channels: number of input channels.
+        out_channels: number of output channels.
+        temb_channels: number of timestep embedding channels.
+        num_res_blocks: number of residual blocks.
+        norm_num_groups: number of groups for the group normalization.
+        norm_eps: epsilon for the group normalization.
+        add_downsample: if True add downsample block.
+        resblock_updown: if True use residual blocks for downsampling.
+        downsample_padding: padding used in the downsampling block.
+        num_head_channels: number of channels in each attention head.
+        use_flash_attention: if True, use flash attention for a memory efficient attention mechanism.
     """
     def __init__(
         self,
@@ -566,6 +616,7 @@ class AdaLNAttnDownBlock(nn.Module):
         resblock_updown: bool = False,
         downsample_padding: int = 1,
         num_head_channels: int = 1,
+        use_flash_attention: bool = False,
     ) -> None:
         super().__init__()
         self.resblock_updown = resblock_updown
@@ -593,6 +644,7 @@ class AdaLNAttnDownBlock(nn.Module):
                     num_head_channels=num_head_channels,
                     norm_num_groups=norm_num_groups,
                     norm_eps=norm_eps,
+                    use_flash_attention=use_flash_attention,
                 )
             )
 
@@ -718,6 +770,20 @@ class AdaLNUpBlock(nn.Module):
 class AdaLNAttnUpBlock(nn.Module):
     """
     Up block with adaLN-Zero ResNet blocks and attention.
+
+    Args:
+        spatial_dims: The number of spatial dimensions.
+        in_channels: number of input channels.
+        prev_output_channel: number of channels from residual connection.
+        out_channels: number of output channels.
+        temb_channels: number of timestep embedding channels.
+        num_res_blocks: number of residual blocks.
+        norm_num_groups: number of groups for the group normalization.
+        norm_eps: epsilon for the group normalization.
+        add_upsample: if True add upsample block.
+        resblock_updown: if True use residual blocks for upsampling.
+        num_head_channels: number of channels in each attention head.
+        use_flash_attention: if True, use flash attention for a memory efficient attention mechanism.
     """
     def __init__(
         self,
@@ -732,6 +798,7 @@ class AdaLNAttnUpBlock(nn.Module):
         add_upsample: bool = True,
         resblock_updown: bool = False,
         num_head_channels: int = 1,
+        use_flash_attention: bool = False,
     ) -> None:
         super().__init__()
         self.resblock_updown = resblock_updown
@@ -761,6 +828,7 @@ class AdaLNAttnUpBlock(nn.Module):
                     num_head_channels=num_head_channels,
                     norm_num_groups=norm_num_groups,
                     norm_eps=norm_eps,
+                    use_flash_attention=use_flash_attention,
                 )
             )
 
@@ -810,6 +878,15 @@ class AdaLNAttnUpBlock(nn.Module):
 class AdaLNMidBlock(nn.Module):
     """
     Middle block with adaLN-Zero ResNet blocks and attention.
+
+    Args:
+        spatial_dims: The number of spatial dimensions.
+        in_channels: number of input channels.
+        temb_channels: number of timestep embedding channels.
+        norm_num_groups: number of groups for the group normalization.
+        norm_eps: epsilon for the group normalization.
+        num_head_channels: number of channels in each attention head.
+        use_flash_attention: if True, use flash attention for a memory efficient attention mechanism.
     """
     def __init__(
         self,
@@ -819,6 +896,7 @@ class AdaLNMidBlock(nn.Module):
         norm_num_groups: int = 32,
         norm_eps: float = 1e-6,
         num_head_channels: int = 1,
+        use_flash_attention: bool = False,
     ) -> None:
         super().__init__()
         self.resnet_1 = AdaLNResnetBlock(
@@ -836,6 +914,7 @@ class AdaLNMidBlock(nn.Module):
             num_head_channels=num_head_channels,
             norm_num_groups=norm_num_groups,
             norm_eps=norm_eps,
+            use_flash_attention=use_flash_attention,
         )
         self.resnet_2 = AdaLNResnetBlock(
             spatial_dims=spatial_dims,
@@ -881,6 +960,8 @@ class DiffusionModelUNetAdaLN(nn.Module):
         norm_eps: epsilon for the normalization.
         resblock_updown: if True use residual blocks for up/downsampling.
         num_head_channels: number of channels in each attention head.
+        with_conditioning: API compatibility - not used (use concatenation instead).
+        use_flash_attention: if True, use flash attention for a memory efficient attention mechanism.
     """
 
     def __init__(
@@ -896,6 +977,7 @@ class DiffusionModelUNetAdaLN(nn.Module):
         resblock_updown: bool = False,
         num_head_channels: int | Sequence[int] = 8,
         with_conditioning: bool = False,  # API compatibility - not used (use concatenation instead)
+        use_flash_attention: bool = False,
     ) -> None:
         super().__init__()
         
@@ -921,6 +1003,14 @@ class DiffusionModelUNetAdaLN(nn.Module):
 
         if len(num_res_blocks) != len(num_channels):
             raise ValueError("num_res_blocks must have same length as num_channels")
+
+        if use_flash_attention and not has_xformers:
+            raise ValueError("use_flash_attention is True but xformers is not installed.")
+
+        if use_flash_attention is True and not torch.cuda.is_available():
+            raise ValueError(
+                "torch.cuda.is_available() should be True but is False. Flash attention is only available for GPU."
+            )
 
         self.in_channels = in_channels
         self.block_out_channels = num_channels
@@ -964,6 +1054,7 @@ class DiffusionModelUNetAdaLN(nn.Module):
                     add_downsample=not is_final_block,
                     resblock_updown=resblock_updown,
                     num_head_channels=num_head_channels[i],
+                    use_flash_attention=use_flash_attention,
                 )
             else:
                 down_block = AdaLNDownBlock(
@@ -988,6 +1079,7 @@ class DiffusionModelUNetAdaLN(nn.Module):
             norm_num_groups=norm_num_groups,
             norm_eps=norm_eps,
             num_head_channels=num_head_channels[-1],
+            use_flash_attention=use_flash_attention,
         )
 
         # Up blocks
@@ -1017,6 +1109,7 @@ class DiffusionModelUNetAdaLN(nn.Module):
                     add_upsample=not is_final_block,
                     resblock_updown=resblock_updown,
                     num_head_channels=reversed_num_head_channels[i],
+                    use_flash_attention=use_flash_attention,
                 )
             else:
                 up_block = AdaLNUpBlock(
