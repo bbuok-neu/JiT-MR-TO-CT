@@ -1,11 +1,13 @@
 """
-Denoiser for MR-to-CT Synthesis using MONAI's DiffusionModelUNet
+Denoiser for MR-to-CT Synthesis using DiffusionModelUNet with adaLN-Zero
 Modified to concatenate MR with zt at each step
 Prediction: vθ = (xθ - zt)/(1-t), where input is concat(zt, mr)
+
+Uses adaLN-Zero timestep embedding (like JiT/DiT) instead of additive injection.
 """
 import torch
 import torch.nn as nn
-from generative.networks.nets import DiffusionModelUNet
+from diffusion_unet_adaln import DiffusionModelUNetAdaLN
 
 
 class Denoiser_MRCT(nn.Module):
@@ -14,19 +16,19 @@ class Denoiser_MRCT(nn.Module):
         args
     ):
         super().__init__()
-        # Use MONAI's DiffusionModelUNet for MR-to-CT synthesis
+        # Use DiffusionModelUNet with adaLN-Zero for MR-to-CT synthesis
         # Input: 2 channels (zt + MR condition)
         # Output: 1 channel (predicted CT)
-        self.net = DiffusionModelUNet(
+        # Uses adaLN-Zero timestep embedding (like JiT) instead of additive injection
+        self.net = DiffusionModelUNetAdaLN(
             spatial_dims=2,
             in_channels=2,  # zt (1ch) + MR condition (1ch)
             out_channels=1,  # predicted CT
-            num_res_blocks=(2, 2, 2, 2),  # MONAI expects tuple/list, one value per level
+            num_res_blocks=(2, 2, 2, 2),  # One value per level
             num_channels=(64, 128, 256, 512),
             attention_levels=(False, False, True, True),
             norm_num_groups=32,
-            num_head_channels=(64, 128, 256, 512),  # Typically matching num_channels (MONAI best practice)
-            with_conditioning=False,  # We use concatenation, not cross-attention conditioning
+            num_head_channels=(64, 128, 256, 512),  # Matching num_channels
             resblock_updown=True,  # Include updown sampling in residual blocks
         )
         self.img_size = args.img_size

@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from generative.networks.nets import DiffusionModelUNet
+from diffusion_unet_adaln import DiffusionModelUNetAdaLN
 
 
 class Denoiser(nn.Module):
@@ -9,25 +9,24 @@ class Denoiser(nn.Module):
         args
     ):
         super().__init__()
-        # Use MONAI's DiffusionModelUNet for conditional MR-to-CT synthesis
+        # Use DiffusionModelUNet with adaLN-Zero for conditional MR-to-CT synthesis
         # Configure for 2-channel input (noisy_latent + condition) and 1-channel output
         # For MR-to-CT: both MR and CT are grayscale (1 channel each)
+        # Uses adaLN-Zero timestep embedding (like JiT) instead of additive injection
         self.condition_channels = getattr(args, 'condition_channels', 1)  # MR condition channels
         self.target_channels = getattr(args, 'target_channels', 1)  # CT target channels
         
-        # Initialize MONAI DiffusionModelUNet
-        # Reference: https://github.com/Project-MONAI/GenerativeModels
-        # Example usage from MOTFM: https://github.com/milad1378yz/MOTFM
-        self.net = DiffusionModelUNet(
+        # Initialize DiffusionModelUNet with adaLN-Zero
+        # Reference: Based on DiT/JiT adaptive layer normalization
+        self.net = DiffusionModelUNetAdaLN(
             spatial_dims=2,
             in_channels=self.target_channels + self.condition_channels,  # noisy target + condition
             out_channels=self.target_channels,  # predicted target
-            num_res_blocks=(2, 2, 2, 2),  # MONAI expects tuple/list, one value per level
+            num_res_blocks=(2, 2, 2, 2),  # One value per level
             num_channels=(64, 128, 256, 512),
             attention_levels=(False, False, True, True),
             norm_num_groups=32,
-            num_head_channels=(64, 128, 256, 512),  # MONAI expects tuple/list, typically matching num_channels
-            with_conditioning=False,  # We use concatenation, not cross-attention conditioning
+            num_head_channels=(64, 128, 256, 512),  # Matching num_channels
             resblock_updown=True,  # Include updown sampling in residual blocks
         )
         self.img_size = args.img_size
