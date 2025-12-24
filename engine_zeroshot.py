@@ -122,7 +122,7 @@ def evaluate_zeroshot(model_without_ddp, test_loader, args, epoch, log_writer=No
         hog_features = hog_features.to(args.device, non_blocking=True)
         
         # Check if CT ground truth is available
-        has_ct = ct_true is not None and not isinstance(ct_true, type(None))
+        has_ct = ct_true is not None
         if has_ct:
             # Handle the case where ct_true might be a list of tensors (some None)
             if isinstance(ct_true, torch.Tensor):

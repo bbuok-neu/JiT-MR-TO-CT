@@ -293,7 +293,7 @@ def get_zeroshot_train_dataloader(dataset_path, batch_size=16, num_workers=4,
         ct_mean=ct_mean,
         ct_std=ct_std,
         transform=transform,
-        augmentation=None,  # TODO: Add augmentation support if needed
+        augmentation=None,  # Augmentation disabled for zero-shot approach to preserve HOG consistency
         img_size=img_size,
         hog_cell_size=hog_cell_size,
         hog_block_size=hog_block_size,
