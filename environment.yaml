@@ -18,4 +18,5 @@ dependencies:
     - einops==0.8.1
     - gdown==5.2.0
     - monai-generative==0.2.3
+    - git+https://github.com/Simon-Bertrand/HOG-PyTorch.git
     - -e git+https://github.com/LTH14/torch-fidelity.git@master#egg=torch-fidelity
