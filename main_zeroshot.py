@@ -23,7 +23,8 @@ import util.misc as misc
 import copy
 from engine_zeroshot import train_one_epoch_zeroshot, evaluate_zeroshot
 from denoiser_zeroshot import Denoiser_ZeroShot
-from dataset_zeroshot import get_zeroshot_train_dataloader, get_zeroshot_test_dataloader
+from dataset_zeroshot import get_zeroshot_train_dataloader, get_zeroshot_test_dataloader, get_paired_mrct_train_dataloader
+
 
 
 def get_args_parser():
@@ -113,6 +114,10 @@ def get_args_parser():
                         help='Mean for CT z-score normalization')
     parser.add_argument('--ct_std', type=float, default=0.5,
                         help='Std for CT z-score normalization')
+    
+    # Training mode
+    parser.add_argument('--use_mr_hog', action='store_true',
+                        help='Train with MR HOG features (paired MR-CT training) instead of CT HOG (zero-shot)')
 
     # Checkpointing
     parser.add_argument('--output_dir', default='./output_zeroshot',
@@ -167,24 +172,44 @@ def main(args):
     else:
         log_writer = None
 
-    # Load training dataset (CT only with HOG)
-    print(f"Loading CT-only dataset from: {args.data_path}")
-    train_loader = get_zeroshot_train_dataloader(
-        dataset_path=args.data_path,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        ct_mean=args.ct_mean,
-        ct_std=args.ct_std,
-        img_size=args.img_size,
-        distributed=args.distributed,
-        enable_augmentation=False,  # No augmentation for now
-        hog_cell_size=args.hog_cell_size,
-        hog_block_size=args.hog_block_size,
-        hog_num_bins=args.hog_num_bins
-    )
+    # Load training dataset based on training mode
+    if args.use_mr_hog:
+        # Paired MR-CT training with MR HOG features (for debugging)
+        print(f"[MR HOG Mode] Loading paired MR-CT dataset from: {args.data_path}")
+        print("Training will use MR HOG features to reconstruct CT (non zero-shot)")
+        train_loader = get_paired_mrct_train_dataloader(
+            dataset_path=args.data_path,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            mr_mean=args.mr_mean,
+            mr_std=args.mr_std,
+            ct_mean=args.ct_mean,
+            ct_std=args.ct_std,
+            img_size=args.img_size,
+            distributed=args.distributed,
+            hog_cell_size=args.hog_cell_size,
+            hog_block_size=args.hog_block_size,
+            hog_num_bins=args.hog_num_bins
+        )
+    else:
+        # Zero-shot training with CT only (original mode)
+        print(f"[Zero-Shot Mode] Loading CT-only dataset from: {args.data_path}")
+        train_loader = get_zeroshot_train_dataloader(
+            dataset_path=args.data_path,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            ct_mean=args.ct_mean,
+            ct_std=args.ct_std,
+            img_size=args.img_size,
+            distributed=args.distributed,
+            enable_augmentation=False,  # No augmentation for now
+            hog_cell_size=args.hog_cell_size,
+            hog_block_size=args.hog_block_size,
+            hog_num_bins=args.hog_num_bins
+        )
     
     # Load test dataset (MR with HOG for zero-shot inference)
-    print(f"Loading MR dataset for zero-shot inference from: {args.data_path}")
+    print(f"Loading MR dataset for inference from: {args.data_path}")
     test_loader = get_zeroshot_test_dataloader(
         dataset_path=args.data_path,
         batch_size=args.batch_size,
@@ -200,8 +225,8 @@ def main(args):
         hog_num_bins=args.hog_num_bins
     )
     
-    print(f"Training batches (CT only): {len(train_loader)}")
-    print(f"Test batches (MR for zero-shot): {len(test_loader)}")
+    print(f"Training batches: {len(train_loader)}")
+    print(f"Test batches: {len(test_loader)}")
 
     # Configure torch compilation settings
     try:
