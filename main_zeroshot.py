@@ -42,9 +42,19 @@ def get_args_parser():
     parser.add_argument('--hog_num_bins', default=9, type=int,
                         help='Number of HOG orientation bins')
     
-    # Cross-attention dimension (computed from HOG params: block_size^2 * num_bins)
-    parser.add_argument('--cross_attention_dim', default=36, type=int,
-                        help='Cross-attention dimension (default: 2*2*9=36)')
+    # HOG embedding parameters
+    parser.add_argument('--hog_input_dim', default=36, type=int,
+                        help='Raw HOG feature dimension (default: 2*2*9=36)')
+    parser.add_argument('--hog_embed_dim', default=768, type=int,
+                        help='HOG embedding dimension for cross-attention (default: 768)')
+    parser.add_argument('--hog_grid_size', default=31, type=int,
+                        help='HOG block grid size for positional encoding (default: 31 for 256x256)')
+    parser.add_argument('--hog_embed_dropout', default=0.1, type=float,
+                        help='Dropout rate for HOG embedding (default: 0.1)')
+    
+    # Cross-attention dimension (now uses hog_embed_dim, kept for backward compatibility)
+    parser.add_argument('--cross_attention_dim', default=768, type=int,
+                        help='Cross-attention dimension (default: 768, should match hog_embed_dim)')
 
     # Training
     parser.add_argument('--epochs', default=200, type=int)
