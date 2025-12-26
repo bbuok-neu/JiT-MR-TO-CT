@@ -60,6 +60,12 @@ class MINDModule(nn.Module):
             - W' = W - (patch_size + neigh_size - 2)
         """
         reduce_size = int((self.patch_size + self.neigh_size - 2) / 2)
+        
+        # Compute crop boundaries once to avoid duplication
+        crop_h_start = reduce_size
+        crop_h_end = self.image_size0 - reduce_size
+        crop_w_start = reduce_size
+        crop_w_end = self.image_size1 - reduce_size
 
         # Estimate local variance of each pixel
         Vimg = torch.add(self._Dp(image, -1, 0), self._Dp(image, 1, 0))
@@ -71,15 +77,14 @@ class MINDModule(nn.Module):
 
         if not self.neigh4:
             # Full neighborhood (neigh_size^2 - 1 channels)
-            xshift_vec = np.arange(-(self.neigh_size // 2), self.neigh_size - (self.neigh_size // 2))
-            yshift_vec = np.arange(-(self.neigh_size // 2), self.neigh_size - (self.neigh_size // 2))
-            for xshift in xshift_vec:
-                for yshift in yshift_vec:
+            half_neigh = self.neigh_size // 2
+            shift_range = range(-half_neigh, half_neigh + 1)
+            for xshift in shift_range:
+                for yshift in shift_range:
                     if (xshift, yshift) == (0, 0):
                         continue
                     MIND_tmp = torch.exp(-self._Dp(image, xshift, yshift) / Vimg)
-                    tmp = MIND_tmp[:, :, reduce_size:(self.image_size0 - reduce_size), 
-                                 reduce_size:(self.image_size1 - reduce_size)]
+                    tmp = MIND_tmp[:, :, crop_h_start:crop_h_end, crop_w_start:crop_w_end]
                     if output is None:
                         output = tmp
                     else:
@@ -87,12 +92,10 @@ class MINDModule(nn.Module):
         else:
             # 4-connectivity (4 channels)
             MIND_tmp = torch.exp(-self._Dp(image, -1, 0) / Vimg)
-            output = MIND_tmp[:, :, reduce_size:(self.image_size0 - reduce_size),
-                             reduce_size:(self.image_size1 - reduce_size)]
+            output = MIND_tmp[:, :, crop_h_start:crop_h_end, crop_w_start:crop_w_end]
             for xshift, yshift in [(1, 0), (0, -1), (0, 1)]:
                 MIND_tmp = torch.exp(-self._Dp(image, xshift, yshift) / Vimg)
-                tmp = MIND_tmp[:, :, reduce_size:(self.image_size0 - reduce_size),
-                              reduce_size:(self.image_size1 - reduce_size)]
+                tmp = MIND_tmp[:, :, crop_h_start:crop_h_end, crop_w_start:crop_w_end]
                 output = torch.cat([output, tmp], 1)
 
         # Normalization
@@ -126,13 +129,21 @@ class MINDModule(nn.Module):
 
     @staticmethod
     def _torch_image_translate(input_, tx, ty, interpolation='nearest'):
-        """Translate image by (tx, ty) pixels."""
+        """Translate image by (tx, ty) pixels.
+        
+        Note: Requires image dimensions > 1 to avoid division by zero.
+        """
+        # Validate minimum image size to prevent division by zero
+        h, w = input_.size()[2], input_.size()[3]
+        if h <= 1 or w <= 1:
+            raise ValueError(f"Image dimensions must be > 1, got {h}x{w}")
+        
         translation_matrix = torch.zeros([input_.size(0), 3, 3], 
                                         dtype=input_.dtype, device=input_.device)
         translation_matrix[:, 0, 0] = 1.0
         translation_matrix[:, 1, 1] = 1.0
-        translation_matrix[:, 0, 2] = -2 * tx / (input_.size()[2] - 1)
-        translation_matrix[:, 1, 2] = -2 * ty / (input_.size()[3] - 1)
+        translation_matrix[:, 0, 2] = -2 * tx / (h - 1)
+        translation_matrix[:, 1, 2] = -2 * ty / (w - 1)
         translation_matrix[:, 2, 2] = 1.0
         grid = F.affine_grid(translation_matrix[:, 0:2, :], input_.size(), align_corners=True)
         wrp = F.grid_sample(input_, grid, mode=interpolation, align_corners=True)

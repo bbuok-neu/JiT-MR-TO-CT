@@ -21,8 +21,12 @@ class Denoiser_MRCT(nn.Module):
     ):
         super().__init__()
         
+        # Get MIND parameters with defaults for backward compatibility
+        mind_neigh_size = getattr(args, 'mind_neigh_size', 7)
+        mind_neigh4 = getattr(args, 'mind_neigh4', False)
+        
         # Calculate number of MIND feature channels
-        mind_channels = get_mind_channels(args.mind_neigh_size, args.mind_neigh4)
+        mind_channels = get_mind_channels(mind_neigh_size, mind_neigh4)
         in_channels = 1 + mind_channels  # noisy CT (1ch) + MIND features
         
         # Use MONAI's DiffusionModelUNet for MR-to-CT synthesis
