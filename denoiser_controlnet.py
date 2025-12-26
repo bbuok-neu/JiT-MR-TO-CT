@@ -3,7 +3,7 @@ ControlNet-based Denoiser for Zero-Shot MR-to-CT Synthesis
 
 Two-stage architecture:
 1. Base Model: Unconditional DiffusionModelUNet trained on CT (in_channels=1)
-2. ControlNet: Takes MIND features (in_channels=48) to guide generation
+2. ControlNet: Takes MIND features (in_channels = neigh_size^2-1 or 4) to guide generation
 
 The ControlNet is initialized from Base Model weights (Encoder + MidBlock),
 except conv_in which has different input channels and is randomly initialized.
@@ -38,7 +38,7 @@ class ControlNetWrapper(nn.Module):
         Args:
             x: Noisy CT image (N, 1, H, W)
             timesteps: Diffusion timesteps (N,)
-            controlnet_cond: MIND features (N, 48, H, W)
+            controlnet_cond: MIND features (N, C, H, W) where C = neigh_size^2-1 or 4
         
         Returns:
             Predicted clean CT image

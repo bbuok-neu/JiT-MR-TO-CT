@@ -402,7 +402,7 @@ def get_zeroshot_dataloaders(dataset_path, batch_size=16, num_workers=4,
         mind_sigma=mind_sigma,
         mind_eps=mind_eps,
         mind_neigh4=mind_neigh4,
-        stage=stage,  # Test always uses stage2 behavior for MIND
+        stage=stage,  # Pass the same stage; test dataset computes MIND from MR
         enable_perturbation=False  # No perturbation for test
     )
     

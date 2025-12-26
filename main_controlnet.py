@@ -87,7 +87,7 @@ def get_args_parser():
     # MIND parameters
     parser.add_argument('--mind_patch_size', type=int, default=7)
     parser.add_argument('--mind_neigh_size', type=int, default=7,
-                        help='MIND neighborhood size (output channels = neigh_size^2 - 1 = 48)')
+                        help='MIND neighborhood size (channels = neigh_size^2 - 1, or 4 if neigh4)')
     parser.add_argument('--mind_sigma', type=float, default=0.5)
     parser.add_argument('--mind_eps', type=float, default=1e-6)
     parser.add_argument('--mind_neigh4', action='store_true',
