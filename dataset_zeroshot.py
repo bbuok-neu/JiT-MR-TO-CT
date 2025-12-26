@@ -355,17 +355,16 @@ def get_zeroshot_dataloaders(dataset_path, batch_size=16, num_workers=4,
         train_loader, test_loader
     """
     from torchvision import transforms
+    import cv2 as cv2_resize
     
-    # Simple center crop transform
-    def center_crop(img, size):
+    # Resize transform instead of center crop to preserve full image content
+    def resize_image(img, size):
         if isinstance(img, np.ndarray):
-            h, w = img.shape[:2]
-            top = (h - size) // 2
-            left = (w - size) // 2
-            return img[top:top+size, left:left+size]
+            # Use cv2 for high-quality resize
+            return cv2_resize.resize(img, (size, size), interpolation=cv2_resize.INTER_LINEAR)
         return img
     
-    transform = lambda img: center_crop(img, img_size)
+    transform = lambda img: resize_image(img, img_size)
     
     # Create datasets
     train_dataset = ZeroShotMRCTDataset(
