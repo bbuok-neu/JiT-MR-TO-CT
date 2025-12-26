@@ -121,9 +121,9 @@ def evaluate_controlnet(model_without_ddp, test_loader, args, epoch, log_writer=
         if mind_features is not None:
             mind_features = mind_features.to(args.device, non_blocking=True)
         
-        # Generate CT from MIND(MR) features
+        # Generate CT from MIND(MR) features (or unconditional for Stage 1)
         with torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16):
-            ct_pred = model_without_ddp.generate(mind_features)
+            ct_pred = model_without_ddp.generate(mind_features, batch_size=ct_true.size(0))
         
         # Denormalize
         ct_pred_denorm = ct_pred * args.ct_std + args.ct_mean

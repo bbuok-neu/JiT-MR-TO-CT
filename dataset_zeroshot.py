@@ -216,8 +216,10 @@ class ZeroShotMRCTDataset(Dataset):
         self.ct_files = sorted([f for f in os.listdir(self.ct_dir) 
                                if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
         
-        # For testing, also need MR files
-        if split == 'test':
+        # For Stage 2 testing, also need MR files (for zero-shot MIND(MR) evaluation)
+        # Stage 1 test does not need MR files as it's unconditional
+        self.mr_files = None
+        if split == 'test' and stage == 'stage2':
             if not os.path.exists(self.mr_dir):
                 raise ValueError(f"MR directory not found: {self.mr_dir}")
             self.mr_files = sorted([f for f in os.listdir(self.mr_dir) 
