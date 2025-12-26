@@ -1,5 +1,8 @@
 """
-Training and Evaluation Engine for MR-to-CT Synthesis
+Training and Evaluation Engine for Zero-Shot MR-to-CT Synthesis with MIND Features
+
+Training: Uses MIND(CT) as condition with noisy CT
+Inference: Uses MIND(MR) for zero-shot cross-modality synthesis
 """
 import math
 import sys
@@ -17,7 +20,11 @@ from metrics import evaluate_metrics, MetricTracker
 
 def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, epoch, log_writer=None, args=None):
     """
-    Train one epoch for MR-to-CT synthesis
+    Train one epoch for zero-shot MR-to-CT synthesis using MIND features
+    
+    Dataloader returns (mind_features, ct) where:
+    - mind_features: MIND(CT) features for training
+    - ct: Target CT image
     """
     model.train(True)
     metric_logger = misc.MetricLogger(delimiter="  ")
@@ -30,18 +37,18 @@ def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, ep
     if log_writer is not None:
         print('log_dir: {}'.format(log_writer.log_dir))
 
-    for data_iter_step, (mr, ct) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+    for data_iter_step, (mind_features, ct) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
         # per iteration (instead of per epoch) lr scheduler
         lr_sched.adjust_learning_rate(optimizer, data_iter_step / len(data_loader) + epoch, args)
 
         # Move to device
-        mr = mr.to(device, non_blocking=True)
+        mind_features = mind_features.to(device, non_blocking=True)
         ct = ct.to(device, non_blocking=True)
 
         # Device-agnostic autocast
         device_type = 'cuda' if device.type == 'cuda' else 'cpu'
         with torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16):
-            loss = model(ct, mr)
+            loss = model(ct, mind_features)
 
         loss_value = loss.item()
         if not math.isfinite(loss_value):
@@ -75,8 +82,13 @@ def train_one_epoch(model, model_without_ddp, data_loader, optimizer, device, ep
 @torch.no_grad()
 def evaluate(model_without_ddp, test_loader, args, epoch, log_writer=None, save_images=True):
     """
-    Evaluate MR-to-CT synthesis on test set
-    Calculate SSIM and PSNR metrics
+    Evaluate zero-shot MR-to-CT synthesis on test set
+    
+    Test dataloader returns (mind_features, ct) where:
+    - mind_features: MIND(MR) features for zero-shot inference
+    - ct: Ground truth CT image
+    
+    Calculate SSIM and PSNR metrics between predicted and true CT
     """
     model_without_ddp.eval()
     world_size = misc.get_world_size()
@@ -111,13 +123,13 @@ def evaluate(model_without_ddp, test_loader, args, epoch, log_writer=None, save_
     # Device-agnostic autocast - determine device type from args
     device_type = 'cuda' if torch.cuda.is_available() and args.device != 'cpu' else 'cpu'
     
-    for batch_idx, (mr, ct_true) in enumerate(test_loader):
-        mr = mr.to(args.device, non_blocking=True)
+    for batch_idx, (mind_features, ct_true) in enumerate(test_loader):
+        mind_features = mind_features.to(args.device, non_blocking=True)
         ct_true = ct_true.to(args.device, non_blocking=True)
         
-        # Generate CT from MR
+        # Generate CT from MIND(MR) features (zero-shot)
         with torch.amp.autocast(device_type=device_type, dtype=torch.bfloat16):
-            ct_pred = model_without_ddp.generate(mr)
+            ct_pred = model_without_ddp.generate(mind_features)
         
         # Denormalize for metrics calculation
         # Denormalize CT: ct_norm = (ct - ct_mean) / ct_std
@@ -131,26 +143,21 @@ def evaluate(model_without_ddp, test_loader, args, epoch, log_writer=None, save_
         
         # Calculate metrics for batch
         metrics = evaluate_metrics(ct_pred_denorm, ct_true_denorm)
-        metric_tracker.update(metrics['psnr'], metrics['ssim'], batch_size=mr.size(0))
+        metric_tracker.update(metrics['psnr'], metrics['ssim'], batch_size=mind_features.size(0))
         
         # Save images (only from rank 0)
+        # Note: We only save CT images since MIND features are multi-channel descriptors
         if save_images and local_rank == 0 and save_folder is not None:
-            for b_id in range(mr.size(0)):
+            for b_id in range(mind_features.size(0)):
                 # Convert to numpy and save
-                mr_img = (mr[b_id, 0].cpu().numpy() * args.mr_std + args.mr_mean)
                 ct_true_img = ct_true_denorm[b_id, 0].cpu().numpy()
                 ct_pred_img = ct_pred_denorm[b_id, 0].cpu().numpy()
                 
                 # Clip to [0, 1] and convert to uint8
-                mr_img = np.clip(mr_img, 0, 1) * 255
                 ct_true_img = np.clip(ct_true_img, 0, 1) * 255
                 ct_pred_img = np.clip(ct_pred_img, 0, 1) * 255
                 
                 # Save as images
-                cv2.imwrite(
-                    os.path.join(save_folder, f'{str(img_idx).zfill(5)}_mr.png'),
-                    mr_img.astype(np.uint8)
-                )
                 cv2.imwrite(
                     os.path.join(save_folder, f'{str(img_idx).zfill(5)}_ct_true.png'),
                     ct_true_img.astype(np.uint8)

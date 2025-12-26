@@ -88,6 +88,18 @@ def get_args_parser():
     parser.add_argument('--ct_std', type=float, default=0.5,
                         help='Std for CT z-score normalization')
 
+    # MIND feature parameters (for zero-shot MR-to-CT synthesis)
+    parser.add_argument('--mind_patch_size', type=int, default=7,
+                        help='MIND Gaussian patch size')
+    parser.add_argument('--mind_neigh_size', type=int, default=7,
+                        help='MIND neighborhood size (output channels = neigh_size^2 - 1)')
+    parser.add_argument('--mind_sigma', type=float, default=0.5,
+                        help='MIND Gaussian kernel sigma')
+    parser.add_argument('--mind_eps', type=float, default=1e-6,
+                        help='MIND numerical stability epsilon')
+    parser.add_argument('--mind_neigh4', action='store_true',
+                        help='Use 4-connectivity instead of full neighborhood (4 channels vs neigh_size^2-1)')
+
     # data augmentation
     parser.add_argument('--enable_augmentation', action='store_true',
                         help='Enable medical image augmentation for training')
@@ -195,7 +207,13 @@ def main(args):
         enable_motion_ghosting=args.enable_motion_ghosting,
         enable_rician_noise=args.enable_rician_noise,
         enable_gamma=args.enable_gamma,
-        enable_cutout=args.enable_cutout
+        enable_cutout=args.enable_cutout,
+        # MIND parameters
+        mind_patch_size=args.mind_patch_size,
+        mind_neigh_size=args.mind_neigh_size,
+        mind_sigma=args.mind_sigma,
+        mind_eps=args.mind_eps,
+        mind_neigh4=args.mind_neigh4
     )
     
     print(f"Training batches: {len(train_loader)}")

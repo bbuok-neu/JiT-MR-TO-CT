@@ -1,5 +1,10 @@
 """
-Paired MR-CT Dataset Loader for Medical Image Synthesis
+Paired MR-CT Dataset Loader for Medical Image Synthesis with MIND Features
+
+For zero-shot MR-to-CT synthesis using MIND (Modality Independent Neighbourhood Descriptor):
+- Training: Uses MIND(CT) as condition concatenated with noisy CT
+- Inference: Uses MIND(MR) as condition for zero-shot synthesis
+
 Loads paired MR and CT images from directory structure:
 dataset/
   mr/
@@ -17,16 +22,24 @@ from torch.utils.data.distributed import DistributedSampler
 from PIL import Image
 import numpy as np
 
+from mind import compute_mind_with_padding, get_mind_channels
+
 
 class PairedMRCTDataset(Dataset):
     """
-    Dataset for paired MR-CT medical images.
+    Dataset for paired MR-CT medical images with MIND features.
+    
+    For training: Returns (MIND(CT), CT) - uses CT's MIND as condition
+    For testing: Returns (MIND(MR), CT) - uses MR's MIND for zero-shot inference
+    
     All images are loaded as single-channel grayscale JPG.
     Z-score normalization is applied with preset mean and std.
     """
     
     def __init__(self, root_dir, split='train', mr_mean=0.0, mr_std=1.0, 
-                 ct_mean=0.0, ct_std=1.0, transform=None, augmentation=None):
+                 ct_mean=0.0, ct_std=1.0, transform=None, augmentation=None,
+                 mind_patch_size=7, mind_neigh_size=7, mind_sigma=0.5, 
+                 mind_eps=1e-6, mind_neigh4=False):
         """
         Args:
             root_dir: Root directory containing 'mr' and 'ct' folders
@@ -37,6 +50,11 @@ class PairedMRCTDataset(Dataset):
             ct_std: Std for CT z-score normalization
             transform: Optional basic transform to apply to images (e.g., cropping)
             augmentation: Optional medical augmentation (PairedMedicalAugmentation instance)
+            mind_patch_size: MIND Gaussian patch size
+            mind_neigh_size: MIND neighborhood size
+            mind_sigma: MIND Gaussian kernel sigma
+            mind_eps: MIND numerical stability epsilon
+            mind_neigh4: Use 4-connectivity for MIND
         """
         self.root_dir = root_dir
         self.split = split
@@ -46,6 +64,13 @@ class PairedMRCTDataset(Dataset):
         self.ct_std = ct_std
         self.transform = transform
         self.augmentation = augmentation
+        
+        # MIND parameters
+        self.mind_patch_size = mind_patch_size
+        self.mind_neigh_size = mind_neigh_size
+        self.mind_sigma = mind_sigma
+        self.mind_eps = mind_eps
+        self.mind_neigh4 = mind_neigh4
         
         # Build paths to MR and CT directories
         self.mr_dir = os.path.join(root_dir, 'mr', split)
@@ -68,15 +93,46 @@ class PairedMRCTDataset(Dataset):
             raise ValueError(f"Number of MR images ({len(self.mr_files)}) does not match "
                            f"CT images ({len(self.ct_files)})")
         
+        mind_channels = get_mind_channels(mind_neigh_size, mind_neigh4)
         print(f"Loaded {len(self.mr_files)} paired MR-CT images from {split} split")
+        print(f"MIND features: {mind_channels} channels (patch={mind_patch_size}, neigh={mind_neigh_size}, neigh4={mind_neigh4})")
     
     def __len__(self):
         return len(self.mr_files)
     
+    def _compute_mind(self, image_tensor):
+        """
+        Compute MIND features for an image tensor.
+        
+        Args:
+            image_tensor: Input image (1, H, W)
+        
+        Returns:
+            MIND features (C, H, W) padded to original size
+        """
+        # Add batch dimension
+        image_batch = image_tensor.unsqueeze(0)  # (1, 1, H, W)
+        
+        # Compute MIND with padding
+        mind_features = compute_mind_with_padding(
+            image_batch,
+            patch_size=self.mind_patch_size,
+            neigh_size=self.mind_neigh_size,
+            sigma=self.mind_sigma,
+            eps=self.mind_eps,
+            neigh4=self.mind_neigh4
+        )
+        
+        # Remove batch dimension
+        return mind_features.squeeze(0)  # (C, H, W)
+    
     def __getitem__(self, idx):
         """
         Returns:
-            mr: MR image tensor (1, H, W) normalized with z-score
+            For training: (mind_ct, ct) where mind_ct is MIND(CT) features
+            For testing: (mind_mr, ct) where mind_mr is MIND(MR) features for zero-shot inference
+            
+            mind: MIND features tensor (C, H, W) where C = neigh_size^2-1 or 4
             ct: CT image tensor (1, H, W) normalized with z-score
         """
         # Load MR image
@@ -138,11 +194,23 @@ class PairedMRCTDataset(Dataset):
         if ct.max() > 1.0:
             ct = ct / 255.0
         
-        # Apply z-score normalization
-        mr = (mr - self.mr_mean) / self.mr_std
-        ct = (ct - self.ct_mean) / self.ct_std
+        # Apply z-score normalization to CT
+        ct_normalized = (ct - self.ct_mean) / self.ct_std
         
-        return mr, ct
+        # Compute MIND features:
+        # - Training: use MIND(CT) as condition
+        # - Testing: use MIND(MR) for zero-shot inference
+        if self.split == 'train':
+            # Use CT for MIND features during training
+            # Note: We compute MIND on normalized CT for consistency
+            mind_features = self._compute_mind(ct)
+        else:
+            # Use MR for MIND features during testing (zero-shot)
+            # First normalize MR, then compute MIND
+            mr_normalized = (mr - self.mr_mean) / self.mr_std
+            mind_features = self._compute_mind(mr_normalized)
+        
+        return mind_features, ct_normalized
 
 
 def get_mrct_dataloaders(dataset_path, batch_size=16, num_workers=4, 
@@ -156,9 +224,16 @@ def get_mrct_dataloaders(dataset_path, batch_size=16, num_workers=4,
                          # MR-only augmentations
                          enable_bias_field=False, enable_motion_ghosting=False,
                          enable_rician_noise=False, enable_gamma=False,
-                         enable_cutout=False):
+                         enable_cutout=False,
+                         # MIND parameters
+                         mind_patch_size=7, mind_neigh_size=7, mind_sigma=0.5,
+                         mind_eps=1e-6, mind_neigh4=False):
     """
-    Create dataloaders for MR-CT paired dataset.
+    Create dataloaders for MR-CT paired dataset with MIND features.
+    
+    For zero-shot MR-to-CT synthesis:
+    - Training: Returns (MIND(CT), CT) pairs
+    - Testing: Returns (MIND(MR), CT) pairs for zero-shot inference
     
     Args:
         dataset_path: Path to dataset root directory
@@ -184,6 +259,13 @@ def get_mrct_dataloaders(dataset_path, batch_size=16, num_workers=4,
             enable_rician_noise: Whether to add Rician noise
             enable_gamma: Whether to apply gamma correction
             enable_cutout: Whether to apply random cutout/erasing
+        
+        MIND parameters:
+            mind_patch_size: MIND Gaussian patch size
+            mind_neigh_size: MIND neighborhood size (output channels = neigh_size^2 - 1)
+            mind_sigma: MIND Gaussian kernel sigma
+            mind_eps: MIND numerical stability epsilon
+            mind_neigh4: Use 4-connectivity (4 channels) instead of full neighborhood
     
     Returns:
         train_loader, test_loader
@@ -240,7 +322,12 @@ def get_mrct_dataloaders(dataset_path, batch_size=16, num_workers=4,
         ct_mean=ct_mean,
         ct_std=ct_std,
         transform=transform_train,
-        augmentation=train_augmentation
+        augmentation=train_augmentation,
+        mind_patch_size=mind_patch_size,
+        mind_neigh_size=mind_neigh_size,
+        mind_sigma=mind_sigma,
+        mind_eps=mind_eps,
+        mind_neigh4=mind_neigh4
     )
     
     test_dataset = PairedMRCTDataset(
@@ -251,7 +338,12 @@ def get_mrct_dataloaders(dataset_path, batch_size=16, num_workers=4,
         ct_mean=ct_mean,
         ct_std=ct_std,
         transform=transform_test,
-        augmentation=None  # No augmentation for test
+        augmentation=None,  # No augmentation for test
+        mind_patch_size=mind_patch_size,
+        mind_neigh_size=mind_neigh_size,
+        mind_sigma=mind_sigma,
+        mind_eps=mind_eps,
+        mind_neigh4=mind_neigh4
     )
     
     # Create dataloaders
