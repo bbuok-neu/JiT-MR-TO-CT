@@ -131,12 +131,14 @@ class MINDModule(nn.Module):
     def _torch_image_translate(input_, tx, ty, interpolation='nearest'):
         """Translate image by (tx, ty) pixels.
         
-        Note: Requires image dimensions > 1 to avoid division by zero.
+        Note: Requires image dimensions >= 2 to avoid division by zero.
         """
         # Validate minimum image size to prevent division by zero
         h, w = input_.size()[2], input_.size()[3]
-        if h <= 1 or w <= 1:
-            raise ValueError(f"Image dimensions must be > 1, got {h}x{w}")
+        if h < 2 or w < 2:
+            raise ValueError(
+                f"Image dimensions must be at least 2x2 for translation matrix computation, got {h}x{w}"
+            )
         
         translation_matrix = torch.zeros([input_.size(0), 3, 3], 
                                         dtype=input_.dtype, device=input_.device)

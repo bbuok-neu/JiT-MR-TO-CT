@@ -200,8 +200,13 @@ class PairedMRCTDataset(Dataset):
         # Compute MIND features:
         # - Training: use MIND(CT) as condition
         # - Testing: use MIND(MR) for zero-shot inference
-        # Note: MIND features are computed on [0,1] normalized images (before z-score)
-        # to ensure consistent scale between CT and MR for zero-shot transfer
+        #
+        # CRITICAL: MIND features are computed on [0,1] normalized images (NOT z-score)
+        # because MIND is a structural descriptor that relies on local intensity differences.
+        # Using [0,1] normalization ensures:
+        # 1. Both CT and MR have the same intensity range for MIND computation
+        # 2. MIND(CT) ≈ MIND(MR) property holds, enabling zero-shot cross-modality transfer
+        # 3. Z-score normalization would introduce modality-specific mean/std bias
         if self.split == 'train':
             # Use CT for MIND features during training
             mind_features = self._compute_mind(ct)
