@@ -175,25 +175,47 @@ class Denoiser_ControlNet(nn.Module):
         else:
             state_dict = checkpoint
         
-        # Filter out keys that don't belong to base model
-        base_model_keys = {k for k in self.base_model.state_dict().keys()}
+        # Get current base model state dict
+        base_model_state = self.base_model.state_dict()
+        base_model_keys = set(base_model_state.keys())
         
-        # Load weights, skipping conv_in for ControlNet (it has different input channels)
+        # Build new state dict with matching weights
+        new_state_dict = {}
         loaded_keys = []
         skipped_keys = []
         
         for key, value in state_dict.items():
-            # Remove 'net.' prefix if present (from old format)
-            clean_key = key.replace('net.', '')
+            # Try different key formats
+            # Format 1: direct key (e.g., "down_blocks.0.resnets.0.conv1.weight")
+            # Format 2: with 'net.' prefix (e.g., "net.down_blocks.0...")
+            # Format 3: with 'base_model.' prefix (e.g., "base_model.down_blocks.0...")
             
-            if clean_key in base_model_keys:
-                try:
-                    self.base_model.state_dict()[clean_key].copy_(value)
-                    loaded_keys.append(clean_key)
-                except RuntimeError as e:
-                    skipped_keys.append((clean_key, str(e)))
+            possible_keys = [
+                key,
+                key.replace('net.', ''),
+                key.replace('base_model.', ''),
+                key.replace('net.', '').replace('base_model.', ''),
+            ]
+            
+            matched_key = None
+            for pk in possible_keys:
+                if pk in base_model_keys:
+                    matched_key = pk
+                    break
+            
+            if matched_key is not None:
+                # Check if shapes match
+                if value.shape == base_model_state[matched_key].shape:
+                    new_state_dict[matched_key] = value
+                    loaded_keys.append(matched_key)
+                else:
+                    skipped_keys.append((key, f"shape mismatch: {value.shape} vs {base_model_state[matched_key].shape}"))
             else:
                 skipped_keys.append((key, "not in base model"))
+        
+        # Load the matched weights
+        if new_state_dict:
+            self.base_model.load_state_dict(new_state_dict, strict=False)
         
         print(f"Loaded {len(loaded_keys)} weight tensors to Base Model")
         if skipped_keys:
