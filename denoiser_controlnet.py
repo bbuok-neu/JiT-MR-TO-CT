@@ -168,7 +168,7 @@ class Denoiser_ControlNet(nn.Module):
         Args:
             checkpoint_path: Path to Stage 1 checkpoint
         """
-        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
         
         if 'model' in checkpoint:
             state_dict = checkpoint['model']

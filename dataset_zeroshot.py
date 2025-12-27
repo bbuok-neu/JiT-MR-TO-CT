@@ -261,7 +261,14 @@ class ZeroShotMRCTDataset(Dataset):
         return image
     
     def _compute_mind(self, image_tensor):
-        """Compute MIND features for an image tensor."""
+        """Compute MIND features for an image tensor.
+        
+        Note: This computation is done on CPU to be compatible with 
+        DataLoader multiprocessing (num_workers > 0).
+        """
+        # Ensure computation happens on CPU for DataLoader compatibility
+        image_tensor = image_tensor.cpu()
+        
         # Add batch dimension
         image_batch = image_tensor.unsqueeze(0)  # (1, 1, H, W)
         
@@ -275,8 +282,8 @@ class ZeroShotMRCTDataset(Dataset):
             neigh4=self.mind_neigh4
         )
         
-        # Remove batch dimension
-        return mind_features.squeeze(0)  # (C, H, W)
+        # Remove batch dimension and ensure float32 for compatibility
+        return mind_features.squeeze(0).float()  # (C, H, W)
     
     def __getitem__(self, idx):
         """
