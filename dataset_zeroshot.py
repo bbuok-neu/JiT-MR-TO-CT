@@ -155,8 +155,8 @@ class ZeroShotMRCTDataset(Dataset):
                  mind_patch_size=7, mind_neigh_size=7, mind_sigma=0.5, 
                  mind_eps=1e-6, mind_neigh4=False,
                  # Training mode
-                 stage='stage1',  # 'stage1' (base) or 'stage2' (controlnet)
-                 # Intensity perturbation params (Stage 2 only)
+                 stage='stage1',  # 'stage1', 'stage2', or 'end2end'
+                 # Intensity perturbation params (Stage 2 / End-to-End only)
                  enable_perturbation=True,
                  invert_prob=0.3,
                  gamma_prob=0.3,
@@ -172,8 +172,8 @@ class ZeroShotMRCTDataset(Dataset):
             mr_mean, mr_std: Z-score normalization params for MR
             transform: Optional transform for cropping/resizing
             mind_*: MIND descriptor parameters
-            stage: Training stage ('stage1' for base model, 'stage2' for controlnet)
-            enable_perturbation: Enable intensity perturbation (Stage 2 only)
+            stage: Training stage ('stage1', 'stage2', or 'end2end')
+            enable_perturbation: Enable intensity perturbation (Stage 2 / End-to-End only)
             *_prob: Probabilities for various perturbations
         """
         self.root_dir = root_dir
@@ -192,9 +192,9 @@ class ZeroShotMRCTDataset(Dataset):
         self.mind_eps = mind_eps
         self.mind_neigh4 = mind_neigh4
         
-        # Intensity perturbation (Stage 2 only)
+        # Intensity perturbation (Stage 2 / End-to-End only)
         self.perturbation = None
-        if stage == 'stage2' and split == 'train' and enable_perturbation:
+        if stage in ['stage2', 'end2end'] and split == 'train' and enable_perturbation:
             self.perturbation = IntensityPerturbation(
                 invert_prob=invert_prob,
                 gamma_prob=gamma_prob,
@@ -216,10 +216,10 @@ class ZeroShotMRCTDataset(Dataset):
         self.ct_files = sorted([f for f in os.listdir(self.ct_dir) 
                                if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
         
-        # For Stage 2 testing, also need MR files (for zero-shot MIND(MR) evaluation)
+        # For Stage 2 / End-to-End testing, also need MR files (for zero-shot MIND(MR) evaluation)
         # Stage 1 test does not need MR files as it's unconditional
         self.mr_files = None
-        if split == 'test' and stage == 'stage2':
+        if split == 'test' and stage in ['stage2', 'end2end']:
             if not os.path.exists(self.mr_dir):
                 raise ValueError(f"MR directory not found: {self.mr_dir}")
             self.mr_files = sorted([f for f in os.listdir(self.mr_dir) 
@@ -229,7 +229,7 @@ class ZeroShotMRCTDataset(Dataset):
         
         mind_channels = get_mind_channels(mind_neigh_size, mind_neigh4)
         print(f"[{split.upper()}] Loaded {len(self.ct_files)} images, Stage: {stage}")
-        if stage == 'stage2':
+        if stage in ['stage2', 'end2end']:
             print(f"  MIND features: {mind_channels} channels")
             if self.perturbation:
                 print(f"  Intensity perturbation: Invert={invert_prob:.1f}, Gamma={gamma_prob:.1f}, Solarize={solarize_prob:.1f}")
@@ -292,7 +292,7 @@ class ZeroShotMRCTDataset(Dataset):
         Stage 1 (Base Model) - Train on CT only:
             Returns: (ct, None) - CT image, no condition
         
-        Stage 2 (ControlNet) - Train with MIND:
+        Stage 2 / End-to-End (ControlNet) - Train with MIND:
             Train: Returns (ct, mind_features) where mind = MIND(perturbed_ct)
             Test:  Returns (ct, mind_features) where mind = MIND(mr)
         """
@@ -307,7 +307,7 @@ class ZeroShotMRCTDataset(Dataset):
         if self.stage == 'stage1':
             return ct_normalized, None
         
-        # Stage 2: ControlNet training with MIND condition
+        # Stage 2 / End-to-End: ControlNet training with MIND condition
         if self.split == 'train':
             # Training: Compute MIND from perturbed CT
             ct_for_mind = ct.clone()
@@ -355,7 +355,7 @@ def get_zeroshot_dataloaders(dataset_path, batch_size=16, num_workers=4,
         img_size: Target image size
         distributed: Use distributed sampler
         mind_*: MIND descriptor parameters
-        stage: 'stage1' (base model) or 'stage2' (controlnet)
+        stage: 'stage1' (base model), 'stage2' (controlnet), or 'end2end' (train from scratch)
         *_prob: Intensity perturbation probabilities
     
     Returns:

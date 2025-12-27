@@ -1,10 +1,11 @@
 """
 Main Training Script for ControlNet-based Zero-Shot MR-to-CT Synthesis
 
-Two-stage training:
+Training modes:
 - Stage 1: Train unconditional Base Model on CT (in_channels=1)
 - Stage 2: Freeze Base Model, train ControlNet with MIND guidance
 - Stage 2 (Joint): Train both Base Model and ControlNet with different learning rates
+- End-to-End: Train both Base Model and ControlNet from scratch together
 
 Usage:
     # Stage 1: Train Base Model
@@ -14,10 +15,14 @@ Usage:
     python main_controlnet.py --data_path /path/to/data --stage stage2 \
         --base_model_path ./output_stage1/checkpoint-last.pth --output_dir ./output_stage2
     
-    # Stage 2 (Joint): Train both models with different learning rates
+    # Stage 2 (Joint): Train both models with different learning rates (finetune)
     python main_controlnet.py --data_path /path/to/data --stage stage2 \
         --base_model_path ./output_stage1/checkpoint-last.pth --output_dir ./output_stage2 \
         --joint_training --base_lr_ratio 0.1
+    
+    # End-to-End: Train from scratch (no pretrained base model needed)
+    python main_controlnet.py --data_path /path/to/data --stage end2end \
+        --output_dir ./output_end2end --base_lr_ratio 1.0
 """
 import argparse
 import datetime
@@ -47,14 +52,14 @@ def get_args_parser():
     parser.add_argument('--img_size', default=256, type=int, help='Image size')
     
     # Training stage
-    parser.add_argument('--stage', default='stage1', type=str, choices=['stage1', 'stage2'],
-                        help='Training stage: stage1 (base model) or stage2 (controlnet)')
+    parser.add_argument('--stage', default='stage1', type=str, choices=['stage1', 'stage2', 'end2end'],
+                        help='Training stage: stage1 (base model), stage2 (controlnet), or end2end (train both from scratch)')
     parser.add_argument('--base_model_path', default='', type=str,
                         help='Path to Stage 1 checkpoint for loading Base Model weights (Stage 2 only)')
     parser.add_argument('--joint_training', action='store_true',
                         help='Enable joint training of base model and ControlNet in Stage 2')
     parser.add_argument('--base_lr_ratio', type=float, default=0.1,
-                        help='Learning rate ratio for base model vs ControlNet in joint training (default: 0.1)')
+                        help='Learning rate ratio for base model vs ControlNet (default: 0.1 for stage2 joint, 1.0 for end2end)')
 
     # Training
     parser.add_argument('--epochs', default=200, type=int)
@@ -197,10 +202,12 @@ def main(args):
     # Create model
     model = Denoiser_ControlNet(args)
 
-    # Load base model weights for Stage 2
+    # Load base model weights for Stage 2 (not for end2end)
     if args.stage == 'stage2' and args.base_model_path:
         print(f"Loading Base Model weights from: {args.base_model_path}")
         model.load_base_model_weights(args.base_model_path)
+    elif args.stage == 'end2end':
+        print("End-to-end training: Base Model and ControlNet initialized randomly")
 
     model.to(device)
 
@@ -216,16 +223,22 @@ def main(args):
     # DDP wrapper
     if args.distributed:
         # Only wrap trainable parameters
+        # find_unused_parameters only needed when base model frozen (stage2 without joint_training)
         model = torch.nn.parallel.DistributedDataParallel(
             model, device_ids=[args.gpu],
-            find_unused_parameters=(args.stage == 'stage2' and not args.joint_training)  # Only needed when base model frozen
+            find_unused_parameters=(args.stage == 'stage2' and not args.joint_training)
         )
         model_without_ddp = model.module
     else:
         model_without_ddp = model
 
-    # Optimizer - use parameter groups for joint training
-    base_lr_ratio = getattr(args, 'base_lr_ratio', 0.1)
+    # Optimizer - use parameter groups for joint/end2end training
+    # For end2end, default base_lr_ratio to 1.0 (same lr for both)
+    if args.stage == 'end2end' and args.base_lr_ratio == 0.1:
+        # User didn't explicitly set it, use 1.0 for end2end
+        base_lr_ratio = 1.0
+    else:
+        base_lr_ratio = getattr(args, 'base_lr_ratio', 0.1)
     param_groups = model_without_ddp.get_param_groups(args.lr, base_lr_ratio)
     optimizer = torch.optim.AdamW(param_groups, betas=(0.9, 0.95), weight_decay=args.weight_decay)
     

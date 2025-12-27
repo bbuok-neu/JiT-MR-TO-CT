@@ -63,10 +63,13 @@ class ControlNetWrapper(nn.Module):
 
 class Denoiser_ControlNet(nn.Module):
     """
-    Two-stage denoiser using ControlNet for MIND-guided CT synthesis.
+    Denoiser using ControlNet for MIND-guided CT synthesis.
     
-    Stage 1: Train Base Model (unconditional) on CT images
-    Stage 2: Freeze Base Model, train ControlNet with MIND features
+    Training modes:
+    - Stage 1: Train Base Model (unconditional) on CT images
+    - Stage 2: Freeze Base Model, train ControlNet with MIND features
+    - Stage 2 (Joint): Train both Base Model and ControlNet (finetune)
+    - End-to-End: Train both from scratch with MIND features
     """
     
     def __init__(self, args):
@@ -110,20 +113,24 @@ class Denoiser_ControlNet(nn.Module):
             **model_config
         )
         
-        # Create ControlNet (MIND features, in_channels=48)
-        # Only created for Stage 2
+        # Create ControlNet (MIND features)
+        # Created for Stage 2 and End-to-End training
         self.controlnet = None
         self.joint_training = getattr(args, 'joint_training', False)
         
-        if self.stage == 'stage2':
+        # For end2end, treat as joint training (both models trainable)
+        if self.stage == 'end2end':
+            self.joint_training = True
+        
+        if self.stage in ['stage2', 'end2end']:
             # IMPORTANT: conditioning_embedding_num_channels controls downsampling
             # For image-space diffusion with full-resolution MIND features,
             # we use a single output channel to avoid spatial size mismatch.
-            # The embedding will map 48 MIND channels -> 64 channels (num_channels[0])
+            # The embedding will map MIND channels -> 64 channels (num_channels[0])
             # without any spatial downsampling.
             self.controlnet = ControlNet(
                 in_channels=1,  # Same as base model for noisy image
-                conditioning_embedding_in_channels=self.mind_channels,  # MIND features (48)
+                conditioning_embedding_in_channels=self.mind_channels,  # MIND features
                 conditioning_embedding_num_channels=(64,),  # Single channel = no downsampling
                 num_res_blocks=(2, 2, 2, 2),
                 num_channels=(64, 128, 256, 512),
@@ -138,12 +145,15 @@ class Denoiser_ControlNet(nn.Module):
             # Create wrapper for combined forward pass
             self.model = ControlNetWrapper(self.base_model, self.controlnet)
             
-            # Freeze base model for ControlNet training (unless joint training)
-            if not self.joint_training:
+            # Freeze base model for ControlNet-only training (Stage 2 without joint_training)
+            if self.stage == 'stage2' and not self.joint_training:
                 for param in self.base_model.parameters():
                     param.requires_grad = False
                 print(f"ControlNet initialized with {self.mind_channels} MIND feature channels")
                 print("Base model frozen for Stage 2 training")
+            elif self.stage == 'end2end':
+                print(f"End-to-end training: Base Model + ControlNet ({self.mind_channels} MIND channels)")
+                print("Both models trainable from scratch")
             else:
                 print(f"ControlNet initialized with {self.mind_channels} MIND feature channels")
                 print("Joint training: Base model and ControlNet both trainable")
@@ -172,26 +182,29 @@ class Denoiser_ControlNet(nn.Module):
     
     def get_param_groups(self, base_lr, base_lr_ratio=0.1):
         """
-        Get parameter groups with different learning rates for joint training.
+        Get parameter groups with different learning rates for joint/end2end training.
         
         Args:
             base_lr: Learning rate for ControlNet
-            base_lr_ratio: Ratio for base model learning rate (default: 0.1)
+            base_lr_ratio: Ratio for base model learning rate (default: 0.1 for joint, 1.0 for end2end)
         
         Returns:
             List of parameter groups for optimizer
         """
-        if not self.joint_training or self.stage != 'stage2':
+        if not self.joint_training or self.stage == 'stage1':
             # Standard training: all trainable params at same lr
             return [{'params': [p for p in self.parameters() if p.requires_grad], 'lr': base_lr}]
         
-        # Joint training: separate groups with different learning rates
+        # Joint/End-to-end training: separate groups with potentially different learning rates
         base_model_params = [p for p in self.base_model.parameters() if p.requires_grad]
         controlnet_params = [p for p in self.controlnet.parameters() if p.requires_grad]
         
         base_model_lr = base_lr * base_lr_ratio
         
-        print(f"Joint training learning rates:")
+        if self.stage == 'end2end':
+            print(f"End-to-end training learning rates:")
+        else:
+            print(f"Joint training learning rates:")
         print(f"  ControlNet lr: {base_lr:.2e}")
         print(f"  Base Model lr: {base_model_lr:.2e} (ratio: {base_lr_ratio})")
         
@@ -296,10 +309,10 @@ class Denoiser_ControlNet(nn.Module):
         
         # Predict
         if self.stage == 'stage1' or mind_features is None:
-            # Unconditional
+            # Unconditional (Stage 1)
             ct_pred = self.base_model(x=zt, timesteps=t.flatten())
         else:
-            # ControlNet guided
+            # ControlNet guided (Stage 2 / End-to-End)
             ct_pred = self.model(x=zt, timesteps=t.flatten(), controlnet_cond=mind_features)
         
         # Predicted velocity
