@@ -113,6 +113,8 @@ class Denoiser_ControlNet(nn.Module):
         # Create ControlNet (MIND features, in_channels=48)
         # Only created for Stage 2
         self.controlnet = None
+        self.joint_training = getattr(args, 'joint_training', False)
+        
         if self.stage == 'stage2':
             # IMPORTANT: conditioning_embedding_num_channels controls downsampling
             # For image-space diffusion with full-resolution MIND features,
@@ -136,12 +138,15 @@ class Denoiser_ControlNet(nn.Module):
             # Create wrapper for combined forward pass
             self.model = ControlNetWrapper(self.base_model, self.controlnet)
             
-            # Freeze base model for ControlNet training
-            for param in self.base_model.parameters():
-                param.requires_grad = False
-            
-            print(f"ControlNet initialized with {self.mind_channels} MIND feature channels")
-            print("Base model frozen for Stage 2 training")
+            # Freeze base model for ControlNet training (unless joint training)
+            if not self.joint_training:
+                for param in self.base_model.parameters():
+                    param.requires_grad = False
+                print(f"ControlNet initialized with {self.mind_channels} MIND feature channels")
+                print("Base model frozen for Stage 2 training")
+            else:
+                print(f"ControlNet initialized with {self.mind_channels} MIND feature channels")
+                print("Joint training: Base model and ControlNet both trainable")
         else:
             self.model = self.base_model
             print("Stage 1: Training unconditional Base Model")
@@ -164,6 +169,38 @@ class Denoiser_ControlNet(nn.Module):
         
         n_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
         print(f"Trainable parameters: {n_params / 1e6:.2f}M")
+    
+    def get_param_groups(self, base_lr, base_lr_ratio=0.1):
+        """
+        Get parameter groups with different learning rates for joint training.
+        
+        Args:
+            base_lr: Learning rate for ControlNet
+            base_lr_ratio: Ratio for base model learning rate (default: 0.1)
+        
+        Returns:
+            List of parameter groups for optimizer
+        """
+        if not self.joint_training or self.stage != 'stage2':
+            # Standard training: all trainable params at same lr
+            return [{'params': [p for p in self.parameters() if p.requires_grad], 'lr': base_lr}]
+        
+        # Joint training: separate groups with different learning rates
+        base_model_params = [p for p in self.base_model.parameters() if p.requires_grad]
+        controlnet_params = [p for p in self.controlnet.parameters() if p.requires_grad]
+        
+        base_model_lr = base_lr * base_lr_ratio
+        
+        print(f"Joint training learning rates:")
+        print(f"  ControlNet lr: {base_lr:.2e}")
+        print(f"  Base Model lr: {base_model_lr:.2e} (ratio: {base_lr_ratio})")
+        
+        param_groups = [
+            {'params': controlnet_params, 'lr': base_lr, 'name': 'controlnet'},
+            {'params': base_model_params, 'lr': base_model_lr, 'name': 'base_model'}
+        ]
+        
+        return param_groups
     
     def load_base_model_weights(self, checkpoint_path):
         """

@@ -4,14 +4,20 @@ Main Training Script for ControlNet-based Zero-Shot MR-to-CT Synthesis
 Two-stage training:
 - Stage 1: Train unconditional Base Model on CT (in_channels=1)
 - Stage 2: Freeze Base Model, train ControlNet with MIND guidance
+- Stage 2 (Joint): Train both Base Model and ControlNet with different learning rates
 
 Usage:
     # Stage 1: Train Base Model
     python main_controlnet.py --data_path /path/to/data --stage stage1 --output_dir ./output_stage1
 
-    # Stage 2: Train ControlNet (load Base Model weights)
+    # Stage 2: Train ControlNet (freeze base model)
     python main_controlnet.py --data_path /path/to/data --stage stage2 \
         --base_model_path ./output_stage1/checkpoint-last.pth --output_dir ./output_stage2
+    
+    # Stage 2 (Joint): Train both models with different learning rates
+    python main_controlnet.py --data_path /path/to/data --stage stage2 \
+        --base_model_path ./output_stage1/checkpoint-last.pth --output_dir ./output_stage2 \
+        --joint_training --base_lr_ratio 0.1
 """
 import argparse
 import datetime
@@ -45,6 +51,10 @@ def get_args_parser():
                         help='Training stage: stage1 (base model) or stage2 (controlnet)')
     parser.add_argument('--base_model_path', default='', type=str,
                         help='Path to Stage 1 checkpoint for loading Base Model weights (Stage 2 only)')
+    parser.add_argument('--joint_training', action='store_true',
+                        help='Enable joint training of base model and ControlNet in Stage 2')
+    parser.add_argument('--base_lr_ratio', type=float, default=0.1,
+                        help='Learning rate ratio for base model vs ControlNet in joint training (default: 0.1)')
 
     # Training
     parser.add_argument('--epochs', default=200, type=int)
@@ -208,16 +218,20 @@ def main(args):
         # Only wrap trainable parameters
         model = torch.nn.parallel.DistributedDataParallel(
             model, device_ids=[args.gpu],
-            find_unused_parameters=(args.stage == 'stage2')  # ControlNet may have unused base model params
+            find_unused_parameters=(args.stage == 'stage2' and not args.joint_training)  # Only needed when base model frozen
         )
         model_without_ddp = model.module
     else:
         model_without_ddp = model
 
-    # Optimizer - only for trainable parameters
+    # Optimizer - use parameter groups for joint training
+    base_lr_ratio = getattr(args, 'base_lr_ratio', 0.1)
+    param_groups = model_without_ddp.get_param_groups(args.lr, base_lr_ratio)
+    optimizer = torch.optim.AdamW(param_groups, betas=(0.9, 0.95), weight_decay=args.weight_decay)
+    
+    # Count trainable parameters
     trainable_params = [p for p in model_without_ddp.parameters() if p.requires_grad]
-    optimizer = torch.optim.AdamW(trainable_params, lr=args.lr, betas=(0.9, 0.95), weight_decay=args.weight_decay)
-    print(f"Optimizer with {len(trainable_params)} trainable parameter groups")
+    print(f"Optimizer with {len(param_groups)} parameter group(s), {len(trainable_params)} total trainable tensors")
 
     # Resume or initialize EMA
     checkpoint_path = os.path.join(args.resume, "checkpoint-last.pth") if args.resume else None
