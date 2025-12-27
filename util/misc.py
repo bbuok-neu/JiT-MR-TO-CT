@@ -265,10 +265,14 @@ def save_model(args, model_without_ddp, optimizer, epoch, epoch_name=None):
         'args': args,
     }
 
-    # ema
+    # ema - only for trainable parameters
+    # Start with full state dict (includes frozen params)
     ema_state_dict1 = copy.deepcopy(model_without_ddp.state_dict())
     ema_state_dict2 = copy.deepcopy(model_without_ddp.state_dict())
-    for i, (name, _value) in enumerate(model_without_ddp.named_parameters()):
+    
+    # Only update EMA values for trainable parameters
+    trainable_param_names = [name for name, p in model_without_ddp.named_parameters() if p.requires_grad]
+    for i, name in enumerate(trainable_param_names):
         assert name in ema_state_dict1 and name in ema_state_dict2
         ema_state_dict1[name] = model_without_ddp.ema_params1[i]
         ema_state_dict2[name] = model_without_ddp.ema_params2[i]
