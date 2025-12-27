@@ -114,10 +114,15 @@ class Denoiser_ControlNet(nn.Module):
         # Only created for Stage 2
         self.controlnet = None
         if self.stage == 'stage2':
+            # IMPORTANT: conditioning_embedding_num_channels controls downsampling
+            # For image-space diffusion with full-resolution MIND features,
+            # we use a single output channel to avoid spatial size mismatch.
+            # The embedding will map 48 MIND channels -> 64 channels (num_channels[0])
+            # without any spatial downsampling.
             self.controlnet = ControlNet(
                 in_channels=1,  # Same as base model for noisy image
-                conditioning_embedding_in_channels=self.mind_channels,  # MIND features
-                conditioning_embedding_num_channels=(64, 128, 256, 512),
+                conditioning_embedding_in_channels=self.mind_channels,  # MIND features (48)
+                conditioning_embedding_num_channels=(64,),  # Single channel = no downsampling
                 num_res_blocks=(2, 2, 2, 2),
                 num_channels=(64, 128, 256, 512),
                 attention_levels=(False, False, True, True),
@@ -125,6 +130,7 @@ class Denoiser_ControlNet(nn.Module):
                 num_head_channels=(64, 128, 256, 512),
                 spatial_dims=2,
                 use_flash_attention=use_flash_attention,
+                resblock_updown=True,  # Match base model
             )
             
             # Create wrapper for combined forward pass
